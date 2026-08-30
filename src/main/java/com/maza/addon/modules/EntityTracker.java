@@ -53,15 +53,9 @@ public class EntityTracker extends Module {
         .defaultValue(true)
         .build());
 
-    private final Setting<Boolean> playSound = sgGeneral.add(new BoolSetting.Builder()
-        .name("play-sound")
-        .description("Sound on detection.")
-        .defaultValue(true)
-        .build());
-
     private final Setting<Double> cooldown = sgGeneral.add(new DoubleSetting.Builder()
         .name("cooldown")
-        .description("Seconds between alerts for same type.")
+        .description("Seconds between alerts.")
         .defaultValue(5.0)
         .min(0.0)
         .sliderMax(30.0)
@@ -164,16 +158,14 @@ public class EntityTracker extends Module {
             addTracked(pos, "player", x, y, z);
         }
         else if ((typeName.contains("zombie") || typeName.contains("skeleton") ||
-                  typeName.contains("creeper") || typeName.contains("spider") ||
-                  typeName.contains("mob")) && trackMobs.get()) {
+                  typeName.contains("creeper") || typeName.contains("spider")) && trackMobs.get()) {
             addTracked(pos, "mob", x, y, z);
         }
-        else if ((typeName.contains("item") || typeName.contains("experience")) && trackItems.get()) {
+        else if (typeName.contains("item") && trackItems.get()) {
             addTracked(pos, "item", x, y, z);
         }
         else if ((typeName.contains("arrow") || typeName.contains("snowball") ||
-                  typeName.contains("ender_pearl") || typeName.contains("potion") ||
-                  typeName.contains("fireball") || typeName.contains("projectile")) && trackProjectiles.get()) {
+                  typeName.contains("ender_pearl") || typeName.contains("potion")) && trackProjectiles.get()) {
             addTracked(pos, "projectile", x, y, z);
         }
     }
@@ -188,15 +180,8 @@ public class EntityTracker extends Module {
 
         if (chatAlert.get()) {
             ChatUtils.info("EntityTracker",
-                "%s spawned at [%.0f, %.0f, %.0f]",
-                type.substring(0, 1).toUpperCase() + type.substring(1), x, y, z);
-        }
-
-        if (playSound.get()) {
-            mc.player.playSound(
-                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_CHIME,
-                1.0f, 1.0f
-            );
+                "%s at [%.0f, %.0f, %.0f]",
+                type.toUpperCase(), x, y, z);
         }
     }
 
@@ -243,5 +228,4 @@ public class EntityTracker extends Module {
             event.renderer.box(x1, y1, z1, x2, y2, z2, side, line, shapeMode.get(), 0);
         }
     }
-            }
-                  
+}
