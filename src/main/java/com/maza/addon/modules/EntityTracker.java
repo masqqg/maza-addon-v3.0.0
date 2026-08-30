@@ -12,7 +12,6 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.EntityType;
 import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
-import net.minecraft.network.packet.s2c.play.PlayerSpawnS2CPacket;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
@@ -154,12 +153,6 @@ public class EntityTracker extends Module {
         if (event.packet instanceof EntitySpawnS2CPacket p) {
             handleEntitySpawn(p.getX(), p.getY(), p.getZ(), p.getEntityType());
         }
-        else if (event.packet instanceof PlayerSpawnS2CPacket p) {
-            if (trackPlayers.get()) {
-                BlockPos pos = new BlockPos((int)p.getX(), (int)p.getY(), (int)p.getZ());
-                addTracked(pos, "player", p.getX(), p.getY(), p.getZ());
-            }
-        }
     }
 
     private void handleEntitySpawn(double x, double y, double z, EntityType<?> type) {
@@ -252,5 +245,4 @@ public class EntityTracker extends Module {
             event.renderer.box(x1, y1, z1, x2, y2, z2, side, line, shapeMode.get(), 0);
         }
     }
-                                                            }
-                                                           
+            }
