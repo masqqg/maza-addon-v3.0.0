@@ -125,7 +125,7 @@ public class EntityTracker extends Module {
     }
 
     public EntityTracker() {
-        super(Category.MISC, "entity-tracker", "Tracks entity spawns in world.");
+        super(Categories.Misc, "entity-tracker", "Tracks entity spawns in world.");
     }
 
     @Override
