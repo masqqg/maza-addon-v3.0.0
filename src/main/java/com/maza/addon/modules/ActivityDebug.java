@@ -138,13 +138,11 @@ public class ActivityDebug extends Module {
         }
 
         if (playSound.get()) {
-            mc.world.playSound(
-                mc.player.getX(), mc.player.getY(), mc.player.getZ(),
-                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(),
-                net.minecraft.sound.SoundCategory.PLAYERS,
-                1.0f, 1.0f,
-                mc.world.random.nextLong()
-            );
+          mc.player.playSound(
+    net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
+    1.0f, 1.0f
+);
+
         }
     }
 
