@@ -131,7 +131,7 @@ public class EntityTracker extends Module {
     }
 
     public EntityTracker() {
-        super(Category.Misc, "entity-tracker", "Tracks entity spawns in world.");
+        super(Category.MISC, "entity-tracker", "Tracks entity spawns in world.");
     }
 
     @Override
@@ -151,6 +151,7 @@ public class EntityTracker extends Module {
         if (mc.player == null || mc.world == null) return;
 
         if (event.packet instanceof EntitySpawnS2CPacket p) {
+            if (p.getY() < -64) return;
             handleEntitySpawn(p.getX(), p.getY(), p.getZ(), p.getEntityType());
         }
     }
@@ -192,12 +193,9 @@ public class EntityTracker extends Module {
         }
 
         if (playSound.get()) {
-            mc.world.playSound(
-                mc.player.getX(), mc.player.getY(), mc.player.getZ(),
-                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_CHIME.value(),
-                net.minecraft.sound.SoundCategory.PLAYERS,
-                1.0f, 1.0f,
-                mc.world.random.nextLong()
+            mc.player.playSound(
+                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_CHIME,
+                1.0f, 1.0f
             );
         }
     }
@@ -236,7 +234,7 @@ public class EntityTracker extends Module {
             Color line = new Color(sc.r, sc.g, sc.b, sc.a);
 
             double x1 = pos.getX() - 0.5;
-            double y1 = pos.getY();
+            double y1 = Math.max(-64, pos.getY());
             double z1 = pos.getZ() - 0.5;
             double x2 = x1 + 1;
             double y2 = y1 + 2;
@@ -246,3 +244,4 @@ public class EntityTracker extends Module {
         }
     }
             }
+        
