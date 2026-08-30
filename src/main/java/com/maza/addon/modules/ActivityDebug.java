@@ -39,12 +39,6 @@ public class ActivityDebug extends Module {
         .defaultValue(true)
         .build());
 
-    private final Setting<Boolean> playSound = sgGeneral.add(new BoolSetting.Builder()
-        .name("play-sound")
-        .description("Pling sound on detection.")
-        .defaultValue(true)
-        .build());
-
     private final Setting<Double> cooldown = sgGeneral.add(new DoubleSetting.Builder()
         .name("cooldown")
         .description("Seconds between notifications per chunk.")
@@ -111,38 +105,26 @@ public class ActivityDebug extends Module {
 
     private void checkActivity(double x, double y, double z) {
         if (mc.player == null || mc.world == null) return;
-        if (mc.player.getY() < 0) return;
         if (y < -64) return;
         if (y > yLevel.get()) return;
 
         ChunkPos chunkPos = new ChunkPos((int) x >> 4, (int) z >> 4);
         activeChunks.add(chunkPos);
-        handleNotification(chunkPos, y);
+        handleNotification(chunkPos, x, y, z);
     }
 
-    private void handleNotification(ChunkPos chunkPos, double y) {
-        if (!notification.get() && !playSound.get()) return;
-        if (mc.player == null || mc.world == null) return;
+    private void handleNotification(ChunkPos chunkPos, double x, double y, double z) {
+        if (!notification.get()) return;
+        if (mc.player == null) return;
 
         long now = System.currentTimeMillis();
         long lastTime = timestamps.getOrDefault(chunkPos.toLong(), 0L);
-        double cooldownMs = cooldown.get() * 1000;
-
-        if (now - lastTime < cooldownMs) return;
+        if (now - lastTime < cooldown.get() * 1000) return;
         timestamps.put(chunkPos.toLong(), now);
 
-        if (notification.get()) {
-            ChatUtils.info("ActivityDebug",
-                "Activity detected! Chunk (%d, %d) at Y %d",
-                chunkPos.x, chunkPos.z, (int) y);
-        }
-
-        if (playSound.get()) {
-            mc.player.playSound(
-                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
-                1.0f, 1.0f
-            );
-        }
+        ChatUtils.info("ActivityDebug",
+            "Activity at [%.0f, %.0f, %.0f] | Chunk (%d, %d)",
+            x, y, z, chunkPos.x, chunkPos.z);
     }
 
     @EventHandler
@@ -178,4 +160,4 @@ public class ActivityDebug extends Module {
             );
         }
     }
-                }
+}
