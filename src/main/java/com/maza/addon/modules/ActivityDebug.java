@@ -4,7 +4,7 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Category;
+import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.render.color.Color;
@@ -71,7 +71,7 @@ public class ActivityDebug extends Module {
     private final Map<Long, Long> timestamps = new ConcurrentHashMap<>();
 
     public ActivityDebug() {
-        super(Category.MISC, "activity-debug", "Detects block activity in chunks.");
+        super(Categories.Misc, "activity-debug", "Detects block activity in chunks.");
     }
 
     @Override
