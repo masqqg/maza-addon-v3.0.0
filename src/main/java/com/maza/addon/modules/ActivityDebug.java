@@ -4,6 +4,7 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Category;  // ← Categories değil!
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.render.color.Color;
@@ -76,7 +77,7 @@ public class ActivityDebug extends Module {
     private final Map<Long, Long> timestamps = new ConcurrentHashMap<>();
 
     public ActivityDebug() {
-        super(Categories.Misc, "activity-debug", "Detects block activity in chunks.");
+        super(Category.Misc, "activity-debug", "Detects block activity in chunks.");
     }
 
     @Override
@@ -138,11 +139,11 @@ public class ActivityDebug extends Module {
 
         if (playSound.get()) {
             mc.world.playSound(
-                mc.player,
                 mc.player.getX(), mc.player.getY(), mc.player.getZ(),
-                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
+                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(),
                 net.minecraft.sound.SoundCategory.PLAYERS,
-                1.0f, 1.0f
+                1.0f, 1.0f,
+                mc.world.random.nextLong()
             );
         }
     }
@@ -180,5 +181,5 @@ public class ActivityDebug extends Module {
             );
         }
     }
-          }
-                                 
+    }
+                
