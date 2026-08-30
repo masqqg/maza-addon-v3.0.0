@@ -4,7 +4,7 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Category;  // ← Categories değil!
+import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.render.color.Color;
@@ -27,7 +27,7 @@ public class ActivityDebug extends Module {
 
     private final Setting<Double> yLevel = sgGeneral.add(new DoubleSetting.Builder()
         .name("y-level")
-        .description("Maximum Y level to detect. -64 = everything above bedrock.")
+        .description("Max Y level. -64 = everything from bedrock up.")
         .defaultValue(-64.0)
         .range(-64.0, 320.0)
         .sliderRange(-64.0, 320.0)
@@ -35,13 +35,13 @@ public class ActivityDebug extends Module {
 
     private final Setting<Boolean> notification = sgGeneral.add(new BoolSetting.Builder()
         .name("notification")
-        .description("Chat message when activity detected.")
+        .description("Chat message on detection.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> playSound = sgGeneral.add(new BoolSetting.Builder()
         .name("play-sound")
-        .description("Pling sound when activity detected.")
+        .description("Pling sound on detection.")
         .defaultValue(true)
         .build());
 
@@ -77,7 +77,7 @@ public class ActivityDebug extends Module {
     private final Map<Long, Long> timestamps = new ConcurrentHashMap<>();
 
     public ActivityDebug() {
-        super(Category.Misc, "activity-debug", "Detects block activity in chunks.");
+        super(Category.MISC, "activity-debug", "Detects block activity in chunks.");
     }
 
     @Override
@@ -138,11 +138,10 @@ public class ActivityDebug extends Module {
         }
 
         if (playSound.get()) {
-          mc.player.playSound(
-    net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
-    1.0f, 1.0f
-);
-
+            mc.player.playSound(
+                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
+                1.0f, 1.0f
+            );
         }
     }
 
@@ -179,5 +178,5 @@ public class ActivityDebug extends Module {
             );
         }
     }
-    }
+                }
                 
