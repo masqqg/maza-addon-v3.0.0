@@ -8,11 +8,8 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.player.FindItemResult;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
-import net.minecraft.item.ToolItem;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -24,14 +21,6 @@ public class SpeedMineBypass extends Module {
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay").description("Delay between break packets (try 3-8)")
         .defaultValue(5).min(1).max(20).sliderRange(1, 20).build());
-
-    private final Setting<Boolean> onlyTools = sgGeneral.add(new BoolSetting.Builder()
-        .name("only-tools").description("Only speed mine when holding a tool")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> silentSwitch = sgGeneral.add(new BoolSetting.Builder()
-        .name("silent-switch").description("Silently switch to best tool")
-        .defaultValue(false).build());
 
     private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
         .name("debug").description("Print debug info")
@@ -66,19 +55,6 @@ public class SpeedMineBypass extends Module {
         BlockPos pos = event.blockPos;
         Direction dir = event.direction;
         if (pos == null || dir == null) return;
-
-        if (onlyTools.get() && !(mc.player.getMainHandStack().getItem() instanceof ToolItem)) {
-            return;
-        }
-
-        if (silentSwitch.get()) {
-            try {
-                FindItemResult tool = InvUtils.findInHotbar(item -> item.getItem() instanceof ToolItem);
-                if (tool.found()) {
-                    InvUtils.swap(tool.slot(), true);
-                }
-            } catch (Exception ignored) {}
-        }
 
         lastBlock = pos;
         lastDirection = dir;
