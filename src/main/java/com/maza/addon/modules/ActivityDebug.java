@@ -2,12 +2,11 @@ package com.maza.addon.modules;
 
 import com.maza.addon.MazaCategory;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -23,18 +22,13 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
 
-import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ActivityDebug extends Module {
 
-    private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgPlayerDebug = settings.createGroup("Player Debug");
     private final SettingGroup sgRender = settings.createGroup("Render");
-
-    private final Setting<Integer> threshold = sgGeneral.add(new IntSetting.Builder()
-        .name("threshold").description("Block updates to trigger alert")
-        .defaultValue(10).min(1).max(100).build());
 
     private final Setting<Boolean> showEntityLooks = sgPlayerDebug.add(new BoolSetting.Builder()
         .name("show-entity-looks").description("Show where entities look (F3+B style)")
@@ -60,17 +54,19 @@ public class ActivityDebug extends Module {
         .name("show-spawners").description("Show mobs with nametags (player spawners)")
         .defaultValue(true).build());
 
+    private final Setting<Boolean> markChunkRed = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("mark-chunk-red").description("Mark chunk red when entity found")
+        .defaultValue(true).build());
+
     private final Setting<Boolean> ignoreY = sgPlayerDebug.add(new BoolSetting.Builder()
         .name("ignore-y-limit").description("Show entities even below y=0")
         .defaultValue(true).build());
 
     private final Setting<Double> lookLineLength = sgPlayerDebug.add(new DoubleSetting.Builder()
-        .name("look-line-length").description("Length of look direction line")
-        .defaultValue(3.0).min(0.5).max(10.0).sliderRange(0.5, 10.0).build());
+        .name("look-line-length").defaultValue(3.0).min(0.5).max(10.0).sliderRange(0.5, 10.0).build());
 
     private final Setting<Double> renderRange = sgPlayerDebug.add(new DoubleSetting.Builder()
-        .name("render-range").description("Max distance to show entity looks")
-        .defaultValue(128.0).min(16.0).max(512.0).sliderRange(16.0, 512.0).build());
+        .name("render-range").defaultValue(128.0).min(16.0).max(512.0).sliderRange(16.0, 512.0).build());
 
     private final Setting<SettingColor> playerLookColor = sgRender.add(new ColorSetting.Builder()
         .name("player-look-color").defaultValue(new SettingColor(0, 255, 255, 255)).build());
@@ -81,41 +77,30 @@ public class ActivityDebug extends Module {
     private final Setting<SettingColor> spawnerColor = sgRender.add(new ColorSetting.Builder()
         .name("spawner-color").defaultValue(new SettingColor(255, 0, 255, 255)).build());
 
-    private final Map<ChunkPos, Integer> chunkActivity = new ConcurrentHashMap<>();
+    private final Setting<SettingColor> redSide = sgRender.add(new ColorSetting.Builder()
+        .name("red-side").defaultValue(new SettingColor(255, 0, 0, 30)).build());
+
+    private final Setting<SettingColor> redLine = sgRender.add(new ColorSetting.Builder()
+        .name("red-line").defaultValue(new SettingColor(255, 0, 0, 255)).build());
+
+    private final Set<ChunkPos> redChunks = ConcurrentHashMap.newKeySet();
 
     public ActivityDebug() {
-        super(MazaCategory.INSTANCE, "activity-debug", "Block activity + entity look tracking");
+        super(MazaCategory.INSTANCE, "activity-debug", "Entity look tracking + red chunk marking (no chat)");
     }
 
     @Override
     public void onActivate() {
-        chunkActivity.clear();
+        redChunks.clear();
     }
 
-    @EventHandler
-    private void onChunkData(ChunkDataEvent event) {
-        if (event == null || event.chunk() == null) return;
-        ChunkPos pos = event.chunk().getPos();
-        chunkActivity.put(pos, 0);
-    }
-
-    @EventHandler
-    private void onBlockUpdate(BlockUpdateEvent event) {
-        if (mc == null || mc.world == null || event == null || event.pos == null) return;
-
-        ChunkPos pos = new ChunkPos(event.pos);
-        int count = chunkActivity.getOrDefault(pos, 0) + 1;
-        chunkActivity.put(pos, count);
-
-        if (count >= threshold.get()) {
-            info("High activity in chunk %s (%d updates)", pos, count);
-            chunkActivity.put(pos, 0);
-        }
+    @Override
+    public void onDeactivate() {
+        redChunks.clear();
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (!showEntityLooks.get()) return;
         if (mc == null || mc.world == null || mc.player == null) return;
         if (event == null || event.renderer == null) return;
 
@@ -131,12 +116,10 @@ public class ActivityDebug extends Module {
         if (entities == null) return;
 
         for (Entity entity : entities) {
-            if (entity == null) continue;
-            if (entity == mc.player) continue;
+            if (entity == null || entity == mc.player) continue;
 
             double distSq = entity.squaredDistanceTo(mc.player);
             if (distSq > maxDistSq) continue;
-
             if (!ignoreY.get() && entity.getY() < 0) continue;
 
             boolean show = false;
@@ -154,16 +137,40 @@ public class ActivityDebug extends Module {
 
             if (!show) continue;
 
+            if (markChunkRed.get()) {
+                redChunks.add(entity.getChunkPos());
+            }
+
+            if (showEntityLooks.get()) {
+                try {
+                    Vec3d eye = entity.getEyePos();
+                    Vec3d look = entity.getRotationVector().multiply(lookLineLength.get());
+                    Vec3d end = eye.add(look);
+
+                    var color = isPlayer ? playerLookColor.get() :
+                               isSpawner ? spawnerColor.get() :
+                               entityLookColor.get();
+
+                    event.renderer.line(eye.x, eye.y, eye.z, end.x, end.y, end.z, color);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        // kırmızı chunk kutuları
+        int pcx = (int) Math.floor(mc.player.getX() / 16);
+        int pcz = (int) Math.floor(mc.player.getZ() / 16);
+
+        for (ChunkPos cp : redChunks) {
+            int dx = cp.x - pcx;
+            int dz = cp.z - pcz;
+            if (Math.abs(dx) > 8 || Math.abs(dz) > 8) continue;
+
             try {
-                Vec3d eye = entity.getEyePos();
-                Vec3d look = entity.getRotationVector().multiply(lookLineLength.get());
-                Vec3d end = eye.add(look);
-
-                var color = isPlayer ? playerLookColor.get() : 
-                           isSpawner ? spawnerColor.get() : 
-                           entityLookColor.get();
-
-                event.renderer.line(eye.x, eye.y, eye.z, end.x, end.y, end.z, color);
+                event.renderer.box(
+                    cp.x * 16, -64, cp.z * 16,
+                    cp.x * 16 + 16, 128, cp.z * 16 + 16,
+                    redSide.get(), redLine.get(), ShapeMode.Both, 0
+                );
             } catch (Exception ignored) {}
         }
     }
