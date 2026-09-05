@@ -16,7 +16,9 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.WorldChunk;
 
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class AirBypass extends Module {
@@ -32,13 +34,9 @@ public class AirBypass extends Module {
         .name("max-y").description("Maximum Y level")
         .defaultValue(0).min(-64).max(64).build());
 
-    private final Setting<Integer> clusterSize = sgGeneral.add(new IntSetting.Builder()
-        .name("min-cluster").description("Min air blocks in chunk to show")
-        .defaultValue(8).min(1).max(64).build());
-
     private final Setting<Integer> renderRange = sgRender.add(new IntSetting.Builder()
-        .name("render-range").description("Max chunks to render")
-        .defaultValue(3).min(1).max(8).sliderRange(1, 8).build());
+        .name("render-range").description("Max blocks from player to render")
+        .defaultValue(64).min(16).max(256).sliderRange(16, 256).build());
 
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode").defaultValue(ShapeMode.Both).build());
@@ -49,20 +47,19 @@ public class AirBypass extends Module {
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color").defaultValue(new SettingColor(255, 0, 0, 255)).build());
 
-    // cluster center + air count (tek box per chunk, binlerce değil)
-    private final Map<ChunkPos, ClusterInfo> clusters = new ConcurrentHashMap<>();
+    private final Set<BlockPos> airBlocks = ConcurrentHashMap.newKeySet();
 
     public AirBypass() {
-        super(MazaCategory.INSTANCE, "air-bypass", "Shows hollow areas / bases below y=0");
+        super(MazaCategory.INSTANCE, "air-bypass", "Shows hollow areas block by block");
     }
 
     @Override
     public void onActivate() {
-        clusters.clear();
+        airBlocks.clear();
         if (mc == null || mc.world == null || mc.player == null) return;
         ChunkPos here = mc.player.getChunkPos();
-        for (int cx = here.x - 2; cx <= here.x + 2; cx++) {
-            for (int cz = here.z - 2; cz <= here.z + 2; cz++) {
+        for (int cx = here.x - 4; cx <= here.x + 4; cx++) {
+            for (int cz = here.z - 4; cz <= here.z + 4; cz++) {
                 WorldChunk c = mc.world.getChunk(cx, cz);
                 if (c != null) scan(c);
             }
@@ -71,7 +68,7 @@ public class AirBypass extends Module {
 
     @Override
     public void onDeactivate() {
-        clusters.clear();
+        airBlocks.clear();
     }
 
     @EventHandler
@@ -86,26 +83,18 @@ public class AirBypass extends Module {
 
         int yMin = minY.get();
         int yMax = maxY.get();
-        int airCount = 0;
 
-        // her 2 blokta tara -> 8x az işlem
-        for (int y = yMin; y <= yMax; y += 2) {
-            for (int x = 0; x < 16; x += 2) {
-                for (int z = 0; z < 16; z += 2) {
+        for (int y = yMin; y <= yMax; y++) {
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
                     try {
                         BlockPos p = new BlockPos(pos.x * 16 + x, y, pos.z * 16 + z);
                         if (chunk.getBlockState(p).isAir()) {
-                            airCount++;
+                            airBlocks.add(p);
                         }
                     } catch (Exception ignored) {}
                 }
             }
-        }
-
-        if (airCount >= clusterSize.get()) {
-            clusters.put(pos, new ClusterInfo(pos.x * 16 + 8, yMin, pos.z * 16 + 8, airCount));
-        } else {
-            clusters.remove(pos);
         }
     }
 
@@ -113,34 +102,25 @@ public class AirBypass extends Module {
     private void onRender(Render3DEvent event) {
         if (mc == null || mc.player == null || event == null || event.renderer == null) return;
 
-        int pcx = (int) Math.floor(mc.player.getX() / 16);
-        int pcz = (int) Math.floor(mc.player.getZ() / 16);
-        int maxChunks = renderRange.get();
-        int yMin = minY.get();
-        int yMax = maxY.get();
-        int height = Math.max(1, yMax - yMin + 1);
+        double px = mc.player.getX();
+        double py = mc.player.getY();
+        double pz = mc.player.getZ();
+        double maxDist = renderRange.get();
+        double maxDistSq = maxDist * maxDist;
 
-        for (Map.Entry<ChunkPos, ClusterInfo> entry : clusters.entrySet()) {
-            ChunkPos cp = entry.getKey();
-            int dx = cp.x - pcx;
-            int dz = cp.z - pcz;
-            if (Math.abs(dx) > maxChunks || Math.abs(dz) > maxChunks) continue;
+        for (BlockPos p : airBlocks) {
+            double dx = p.getX() + 0.5 - px;
+            double dy = p.getY() + 0.5 - py;
+            double dz = p.getZ() + 0.5 - pz;
+            if (dx * dx + dy * dy + dz * dz > maxDistSq) continue;
 
-            ClusterInfo info = entry.getValue();
-
-            // tek büyük box per cluster (FPS dostu)
-            event.renderer.box(
-                cp.x * 16, yMin, cp.z * 16,
-                cp.x * 16 + 16, yMax + 1, cp.z * 16 + 16,
-                sideColor.get(), lineColor.get(), shapeMode.get(), 0
-            );
+            try {
+                event.renderer.box(
+                    p.getX(), p.getY(), p.getZ(),
+                    p.getX() + 1, p.getY() + 1, p.getZ() + 1,
+                    sideColor.get(), lineColor.get(), shapeMode.get(), 0
+                );
+            } catch (Exception ignored) {}
         }
     }
-
-    private static class ClusterInfo {
-        final int cx, cy, cz, count;
-        ClusterInfo(int cx, int cy, int cz, int count) {
-            this.cx = cx; this.cy = cy; this.cz = cz; this.count = count;
-        }
-    }
-    }
+}
