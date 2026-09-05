@@ -1,163 +1,75 @@
 package com.maza.addon.modules;
 
-import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import com.maza.addon.MazaCategory;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
+import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Categories;
-import meteordevelopment.meteorclient.utils.player.ChatUtils;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
-import net.minecraft.network.packet.s2c.play.BlockEntityUpdateS2CPacket;
-import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.Vec3d;
 
-import java.util.*;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ActivityDebug extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgRender  = settings.createGroup("Render");
 
-    private final Setting<Double> yLevel = sgGeneral.add(new DoubleSetting.Builder()
-        .name("y-level")
-        .description("Max Y level. -64 = everything from bedrock up.")
-        .defaultValue(-64.0)
-        .range(-64.0, 320.0)
-        .sliderRange(-64.0, 320.0)
-        .build());
+    private final Setting<Integer> threshold = sgGeneral.add(new IntSetting.Builder()
+        .name("threshold")
+        .description("Block updates to trigger alert")
+        .defaultValue(10)
+        .min(1)
+        .max(100)
+        .build()
+    );
 
-    private final Setting<Boolean> notification = sgGeneral.add(new BoolSetting.Builder()
-        .name("notification")
-        .description("Chat message on detection.")
+    private final Setting<Boolean> playSound = sgGeneral.add(new BoolSetting.Builder()
+        .name("play-sound")
+        .description("Play sound on detection")
         .defaultValue(true)
-        .build());
+        .build()
+    );
 
-    private final Setting<Double> cooldown = sgGeneral.add(new DoubleSetting.Builder()
-        .name("cooldown")
-        .description("Seconds between notifications per chunk.")
-        .defaultValue(3.0)
-        .min(0.0)
-        .sliderMax(10.0)
-        .build());
-
-    private final Setting<SettingColor> renderColor = sgRender.add(new ColorSetting.Builder()
-        .name("render-color")
-        .description("Chunk box color.")
-        .defaultValue(new SettingColor(255, 100, 100, 180))
-        .build());
-
-    private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
-        .name("shape-mode")
-        .description("How chunk boxes are rendered.")
-        .defaultValue(ShapeMode.Both)
-        .build());
-
-    private final Setting<Double> renderDistance = sgRender.add(new DoubleSetting.Builder()
-        .name("render-distance")
-        .description("Max distance to render chunk boxes.")
-        .defaultValue(256.0)
-        .min(16.0)
-        .sliderMax(512.0)
-        .build());
-
-    private final Set<ChunkPos> activeChunks = ConcurrentHashMap.newKeySet();
-    private final Map<Long, Long> timestamps = new ConcurrentHashMap<>();
+    private final Map<ChunkPos, Integer> chunkActivity = new ConcurrentHashMap<>();
 
     public ActivityDebug() {
-        super(Categories.Misc, "activity-debug", "Detects block activity in chunks.");
+        super(MazaCategory.INSTANCE, "activity-debug", "Detects block activity in chunks.");
     }
 
     @Override
     public void onActivate() {
-        activeChunks.clear();
-        timestamps.clear();
-    }
-
-    @Override
-    public void onDeactivate() {
-        activeChunks.clear();
-        timestamps.clear();
+        chunkActivity.clear();
     }
 
     @EventHandler
-    private void onPacket(PacketEvent.Receive event) {
-        if (event.packet instanceof BlockUpdateS2CPacket packet) {
-            BlockPos pos = packet.getPos();
-            checkActivity(pos.getX(), pos.getY(), pos.getZ());
-        }
-        else if (event.packet instanceof BlockEntityUpdateS2CPacket packet) {
-            BlockPos pos = packet.getPos();
-            checkActivity(pos.getX(), pos.getY(), pos.getZ());
-        }
-        else if (event.packet instanceof ChunkDeltaUpdateS2CPacket packet) {
-            packet.visitUpdates((pos, state) ->
-                checkActivity(pos.getX(), pos.getY(), pos.getZ())
-            );
-        }
-    }
-
-    private void checkActivity(double x, double y, double z) {
-        if (mc.player == null || mc.world == null) return;
-        if (y < -64) return;
-        if (y > yLevel.get()) return;
-
-        ChunkPos chunkPos = new ChunkPos((int) x >> 4, (int) z >> 4);
-        activeChunks.add(chunkPos);
-        handleNotification(chunkPos, x, y, z);
-    }
-
-    private void handleNotification(ChunkPos chunkPos, double x, double y, double z) {
-        if (!notification.get()) return;
-        if (mc.player == null) return;
-
-        long now = System.currentTimeMillis();
-        long lastTime = timestamps.getOrDefault(chunkPos.toLong(), 0L);
-        if (now - lastTime < cooldown.get() * 1000) return;
-        timestamps.put(chunkPos.toLong(), now);
-
-        ChatUtils.info("ActivityDebug",
-            "Activity at [%.0f, %.0f, %.0f] | Chunk (%d, %d)",
-            x, y, z, chunkPos.x, chunkPos.z);
+    private void onChunkData(ChunkDataEvent event) {
+        ChunkPos pos = event.chunk().getPos();
+        chunkActivity.put(pos, 0);
     }
 
     @EventHandler
-    private void onRender(Render3DEvent event) {
-        if (activeChunks.isEmpty()) return;
-        if (mc.player == null || mc.world == null) return;
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        if (mc.world == null) return;
 
-        Vec3d camPos = mc.gameRenderer.getCamera().getPos();
-        SettingColor sc = renderColor.get();
-        Color sideColor = new Color(sc.r, sc.g, sc.b, (int) (sc.a * 0.4));
-        Color lineColor = new Color(sc.r, sc.g, sc.b, sc.a);
+        ChunkPos pos = new ChunkPos(event.pos);
+        int count = chunkActivity.getOrDefault(pos, 0) + 1;
+        chunkActivity.put(pos, count);
 
-        for (ChunkPos cp : activeChunks) {
-            double cx = (cp.x << 4) + 8;
-            double cz = (cp.z << 4) + 8;
-            double dist = Math.sqrt(
-                Math.pow(cx - camPos.x, 2) +
-                Math.pow(cz - camPos.z, 2)
-            );
-            if (dist > renderDistance.get()) continue;
-
-            double x1 = cp.x << 4;
-            double z1 = cp.z << 4;
-            double x2 = x1 + 16;
-            double z2 = z1 + 16;
-
-            event.renderer.box(
-                x1, -64, z1,
-                x2, 320, z2,
-                sideColor, lineColor,
-                shapeMode.get(),
-                0
-            );
+        if (count >= threshold.get()) {
+            info("High activity in chunk %s (%d updates)", pos, count);
+            
+            if (playSound.get() && mc.player != null) {
+                mc.world.playSound(
+                    mc.player,
+                    mc.player.getX(), mc.player.getY(), mc.player.getZ(),
+                    net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
+                    net.minecraft.sound.SoundCategory.PLAYERS,
+                    1.0f, 1.0f
+                );
+            }
+            
+            chunkActivity.put(pos, 0);
         }
     }
 }
