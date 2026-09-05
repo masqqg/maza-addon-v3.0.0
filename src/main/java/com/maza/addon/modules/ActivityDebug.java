@@ -16,8 +16,6 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.entity.mob.*;
-import net.minecraft.entity.passive.*;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.HopperMinecartEntity;
 import net.minecraft.entity.vehicle.MinecartEntity;
@@ -37,10 +35,6 @@ public class ActivityDebug extends Module {
     private final Setting<Integer> threshold = sgGeneral.add(new IntSetting.Builder()
         .name("threshold").description("Block updates to trigger alert")
         .defaultValue(10).min(1).max(100).build());
-
-    private final Setting<Boolean> playSound = sgGeneral.add(new BoolSetting.Builder()
-        .name("play-sound").description("Play sound on detection")
-        .defaultValue(true).build());
 
     private final Setting<Boolean> showEntityLooks = sgPlayerDebug.add(new BoolSetting.Builder()
         .name("show-entity-looks").description("Show where entities look (F3+B style)")
@@ -115,17 +109,6 @@ public class ActivityDebug extends Module {
 
         if (count >= threshold.get()) {
             info("High activity in chunk %s (%d updates)", pos, count);
-
-            if (playSound.get() && mc.player != null && mc.world != null) {
-                mc.world.playSound(
-                    mc.player,
-                    mc.player.getX(), mc.player.getY(), mc.player.getZ(),
-                    net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING,
-                    net.minecraft.sound.SoundCategory.PLAYERS,
-                    1.0f, 1.0f
-                );
-            }
-
             chunkActivity.put(pos, 0);
         }
     }
@@ -185,7 +168,6 @@ public class ActivityDebug extends Module {
         }
     }
 
-    // nametag'i olan mob = oyuncu spawner'ı (doğal spawn değil)
     private boolean hasNametag(Entity entity) {
         if (entity == null) return false;
         Text customName = entity.getCustomName();
