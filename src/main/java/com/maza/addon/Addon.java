@@ -10,8 +10,6 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
-        // kategori MazaCategory'de zaten INSTANCE olarak var
-        // modülleri ekle
         Modules.get().add(new ActivityDebug());
         Modules.get().add(new MovementDebug());
         Modules.get().add(new EntityTracker());
@@ -22,5 +20,10 @@ public class Addon extends MeteorAddon {
     public void onRegisterCategories() {
         super.onRegisterCategories();
         Modules.registerCategory(MazaCategory.INSTANCE);
+    }
+
+    @Override
+    public String getPackage() {
+        return "com.maza.addon";
     }
 }
