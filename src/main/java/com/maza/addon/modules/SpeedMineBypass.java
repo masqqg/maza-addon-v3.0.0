@@ -1,16 +1,14 @@
 package com.maza.addon.modules;
 
+import com.maza.addon.MazaCategory;
 import meteordevelopment.meteorclient.events.entity.player.StartBreakingBlockEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Categories;
-import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
-import net.minecraft.item.Items;
 import net.minecraft.item.ToolItem;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.util.math.BlockPos;
@@ -56,7 +54,7 @@ public class SpeedMineBypass extends Module {
     private int tickCounter = 0;
 
     public SpeedMineBypass() {
-        super(Categories.Misc, "speed-mine-bypass", "Speed mine with anti-cheat bypass");
+        super(MazaCategory.INSTANCE, "speed-mine-bypass", "Speed mine with anti-cheat bypass");
     }
 
     @Override
@@ -79,7 +77,6 @@ public class SpeedMineBypass extends Module {
 
         BlockPos pos = event.blockPos;
         Direction dir = event.direction;
-        BlockState state = mc.world.getBlockState(pos);
 
         if (onlyTools.get()) {
             if (!(mc.player.getMainHandStack().getItem() instanceof ToolItem)) {
@@ -104,7 +101,7 @@ public class SpeedMineBypass extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.world == null || mc.player == null || mc.interactionManager == null) return;
+        if (mc.world == null || mc.player == null || mc.getNetworkHandler() == null) return;
         if (lastBlock == null) return;
 
         tickCounter++;
@@ -130,4 +127,4 @@ public class SpeedMineBypass extends Module {
             }
         }
     }
-  }
+}
