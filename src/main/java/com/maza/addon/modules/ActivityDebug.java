@@ -63,7 +63,7 @@ public class ActivityDebug extends Module {
         .defaultValue(true).build());
 
     private final Setting<Boolean> showSpawners = sgPlayerDebug.add(new BoolSetting.Builder()
-        .name("show-spawners").description("Show custom spawner mobs (player-made)")
+        .name("show-spawners").description("Show mobs with nametags (player spawners)")
         .defaultValue(true).build());
 
     private final Setting<Boolean> ignoreY = sgPlayerDebug.add(new BoolSetting.Builder()
@@ -164,7 +164,7 @@ public class ActivityDebug extends Module {
             else if (entity instanceof ItemFrameEntity && showItemFrames.get()) show = true;
             else if (entity instanceof ArmorStandEntity && showArmorStands.get()) show = true;
             else if ((entity instanceof MinecartEntity || entity instanceof HopperMinecartEntity) && showMinecarts.get()) show = true;
-            else if (showSpawners.get() && isCustomSpawner(entity)) {
+            else if (showSpawners.get() && hasNametag(entity)) {
                 show = true;
                 isSpawner = true;
             }
@@ -185,25 +185,10 @@ public class ActivityDebug extends Module {
         }
     }
 
-    // sunucu spawner'larını tespit et (custom name veya özel mob türleri)
-    private boolean isCustomSpawner(Entity entity) {
+    // nametag'i olan mob = oyuncu spawner'ı (doğal spawn değil)
+    private boolean hasNametag(Entity entity) {
         if (entity == null) return false;
-
-        // custom name varsa kesin oyuncu spawner'ı
         Text customName = entity.getCustomName();
-        if (customName != null && !customName.getString().isEmpty()) {
-            return true;
-        }
-
-        // chicken smp'deki spawner mob türleri
-        if (entity instanceof IronGolemEntity) return true; // golem spawner
-        if (entity instanceof PigEntity) return true; // domuz spawner
-        if (entity instanceof CowEntity) return true; // inek spawner
-        if (entity instanceof BlazeEntity) return true; // blaze spawner
-        if (entity instanceof ZombifiedPiglinEntity) return true; // zombi piglin spawner
-        if (entity instanceof SkeletonEntity) return true; // iskelet spawner
-        if (entity instanceof ZombieEntity) return true; // zombi spawner
-
-        return false;
+        return customName != null && !customName.getString().isEmpty();
     }
 }
