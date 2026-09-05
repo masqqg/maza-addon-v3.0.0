@@ -1,12 +1,29 @@
 package com.maza.addon.modules;
 
 import com.maza.addon.MazaCategory;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.ColorSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.decoration.ArmorStandEntity;
+import net.minecraft.entity.decoration.ItemFrameEntity;
+import net.minecraft.entity.mob.*;
+import net.minecraft.entity.passive.*;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.vehicle.HopperMinecartEntity;
+import net.minecraft.entity.vehicle.MinecartEntity;
+import net.minecraft.text.Text;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.Vec3d;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,27 +31,66 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ActivityDebug extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgPlayerDebug = settings.createGroup("Player Debug");
+    private final SettingGroup sgRender = settings.createGroup("Render");
 
     private final Setting<Integer> threshold = sgGeneral.add(new IntSetting.Builder()
-        .name("threshold")
-        .description("Block updates to trigger alert")
-        .defaultValue(10)
-        .min(1)
-        .max(100)
-        .build()
-    );
+        .name("threshold").description("Block updates to trigger alert")
+        .defaultValue(10).min(1).max(100).build());
 
     private final Setting<Boolean> playSound = sgGeneral.add(new BoolSetting.Builder()
-        .name("play-sound")
-        .description("Play sound on detection")
-        .defaultValue(true)
-        .build()
-    );
+        .name("play-sound").description("Play sound on detection")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> showEntityLooks = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("show-entity-looks").description("Show where entities look (F3+B style)")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> showPlayers = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("show-players").description("Show player look direction")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> showItemFrames = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("show-item-frames").description("Show item frame facing")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> showArmorStands = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("show-armor-stands").description("Show armor stand facing")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> showMinecarts = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("show-minecarts").description("Show minecart/hopper minecart facing")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> showSpawners = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("show-spawners").description("Show custom spawner mobs (player-made)")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> ignoreY = sgPlayerDebug.add(new BoolSetting.Builder()
+        .name("ignore-y-limit").description("Show entities even below y=0")
+        .defaultValue(true).build());
+
+    private final Setting<Double> lookLineLength = sgPlayerDebug.add(new DoubleSetting.Builder()
+        .name("look-line-length").description("Length of look direction line")
+        .defaultValue(3.0).min(0.5).max(10.0).sliderRange(0.5, 10.0).build());
+
+    private final Setting<Double> renderRange = sgPlayerDebug.add(new DoubleSetting.Builder()
+        .name("render-range").description("Max distance to show entity looks")
+        .defaultValue(128.0).min(16.0).max(512.0).sliderRange(16.0, 512.0).build());
+
+    private final Setting<SettingColor> playerLookColor = sgRender.add(new ColorSetting.Builder()
+        .name("player-look-color").defaultValue(new SettingColor(0, 255, 255, 255)).build());
+
+    private final Setting<SettingColor> entityLookColor = sgRender.add(new ColorSetting.Builder()
+        .name("entity-look-color").defaultValue(new SettingColor(255, 255, 0, 255)).build());
+
+    private final Setting<SettingColor> spawnerColor = sgRender.add(new ColorSetting.Builder()
+        .name("spawner-color").defaultValue(new SettingColor(255, 0, 255, 255)).build());
 
     private final Map<ChunkPos, Integer> chunkActivity = new ConcurrentHashMap<>();
 
     public ActivityDebug() {
-        super(MazaCategory.INSTANCE, "activity-debug", "Detects block activity in chunks.");
+        super(MazaCategory.INSTANCE, "activity-debug", "Block activity + entity look tracking");
     }
 
     @Override
@@ -44,13 +100,14 @@ public class ActivityDebug extends Module {
 
     @EventHandler
     private void onChunkData(ChunkDataEvent event) {
+        if (event == null || event.chunk() == null) return;
         ChunkPos pos = event.chunk().getPos();
         chunkActivity.put(pos, 0);
     }
 
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
-        if (mc.world == null) return;
+        if (mc == null || mc.world == null || event == null || event.pos == null) return;
 
         ChunkPos pos = new ChunkPos(event.pos);
         int count = chunkActivity.getOrDefault(pos, 0) + 1;
@@ -58,8 +115,8 @@ public class ActivityDebug extends Module {
 
         if (count >= threshold.get()) {
             info("High activity in chunk %s (%d updates)", pos, count);
-            
-            if (playSound.get() && mc.player != null) {
+
+            if (playSound.get() && mc.player != null && mc.world != null) {
                 mc.world.playSound(
                     mc.player,
                     mc.player.getX(), mc.player.getY(), mc.player.getZ(),
@@ -68,8 +125,85 @@ public class ActivityDebug extends Module {
                     1.0f, 1.0f
                 );
             }
-            
+
             chunkActivity.put(pos, 0);
         }
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (!showEntityLooks.get()) return;
+        if (mc == null || mc.world == null || mc.player == null) return;
+        if (event == null || event.renderer == null) return;
+
+        double maxDist = renderRange.get();
+        double maxDistSq = maxDist * maxDist;
+
+        Iterable<Entity> entities;
+        try {
+            entities = mc.world.getEntities();
+        } catch (Exception e) {
+            return;
+        }
+        if (entities == null) return;
+
+        for (Entity entity : entities) {
+            if (entity == null) continue;
+            if (entity == mc.player) continue;
+
+            double distSq = entity.squaredDistanceTo(mc.player);
+            if (distSq > maxDistSq) continue;
+
+            if (!ignoreY.get() && entity.getY() < 0) continue;
+
+            boolean show = false;
+            boolean isPlayer = entity instanceof PlayerEntity;
+            boolean isSpawner = false;
+
+            if (isPlayer && showPlayers.get()) show = true;
+            else if (entity instanceof ItemFrameEntity && showItemFrames.get()) show = true;
+            else if (entity instanceof ArmorStandEntity && showArmorStands.get()) show = true;
+            else if ((entity instanceof MinecartEntity || entity instanceof HopperMinecartEntity) && showMinecarts.get()) show = true;
+            else if (showSpawners.get() && isCustomSpawner(entity)) {
+                show = true;
+                isSpawner = true;
+            }
+
+            if (!show) continue;
+
+            try {
+                Vec3d eye = entity.getEyePos();
+                Vec3d look = entity.getRotationVector().multiply(lookLineLength.get());
+                Vec3d end = eye.add(look);
+
+                var color = isPlayer ? playerLookColor.get() : 
+                           isSpawner ? spawnerColor.get() : 
+                           entityLookColor.get();
+
+                event.renderer.line(eye.x, eye.y, eye.z, end.x, end.y, end.z, color);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    // sunucu spawner'larını tespit et (custom name veya özel mob türleri)
+    private boolean isCustomSpawner(Entity entity) {
+        if (entity == null) return false;
+
+        // custom name varsa kesin oyuncu spawner'ı
+        Text customName = entity.getCustomName();
+        if (customName != null && !customName.getString().isEmpty()) {
+            return true;
+        }
+
+        // chicken smp'deki spawner mob türleri
+        if (entity instanceof IronGolemEntity) return true; // golem spawner
+        if (entity instanceof PigEntity) return true; // domuz spawner
+        if (entity instanceof CowEntity) return true; // inek spawner
+        if (entity instanceof BlazeEntity) return true; // blaze spawner
+        if (entity instanceof ZombifiedPiglinEntity) return true; // zombi piglin spawner
+        if (entity instanceof SkeletonEntity) return true; // iskelet spawner
+        if (entity instanceof ZombieEntity) return true; // zombi spawner
+
+        return false;
     }
 }
