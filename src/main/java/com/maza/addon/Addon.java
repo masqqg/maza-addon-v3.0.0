@@ -5,14 +5,13 @@ import com.maza.addon.modules.MovementDebug;
 import com.maza.addon.modules.EntityTracker;
 import com.maza.addon.modules.SpeedMineBypass;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
-import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 
-public class MazaAddon extends MeteorAddon {
+public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
-        Categories.add(MazaCategory.INSTANCE);
-        
+        // kategori MazaCategory'de zaten INSTANCE olarak var
+        // modülleri ekle
         Modules.get().add(new ActivityDebug());
         Modules.get().add(new MovementDebug());
         Modules.get().add(new EntityTracker());
@@ -21,21 +20,7 @@ public class MazaAddon extends MeteorAddon {
 
     @Override
     public void onRegisterCategories() {
-        Categories.add(MazaCategory.INSTANCE);
-    }
-
-    @Override
-    public String getWebsite() {
-        return null;
-    }
-
-    @Override
-    public String getGithubRepo() {
-        return null;
-    }
-
-    @Override
-    public String getPackage() {
-        return "com.maza.addon";
+        super.onRegisterCategories();
+        Modules.registerCategory(MazaCategory.INSTANCE);
     }
 }
