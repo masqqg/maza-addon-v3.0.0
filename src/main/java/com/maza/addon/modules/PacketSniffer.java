@@ -6,8 +6,6 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-
-import java.util.Arrays;
 import java.util.List;
 
 public class PacketSniffer extends Module {
@@ -24,71 +22,31 @@ public class PacketSniffer extends Module {
         .name("max-lines").description("Her seferinde max kaç satır göster")
         .defaultValue(15).min(1).max(50).sliderRange(1, 50).build());
 
-    // PACKET FİLTRELERİ
-    private final Setting<Boolean> fChunkData = sgFilters.add(new BoolSetting.Builder()
-        .name("chunk-data").description("Chunk veri packetleri").defaultValue(true).build());
-    private final Setting<Boolean> fChunkDelta = sgFilters.add(new BoolSetting.Builder()
-        .name("chunk-delta").description("Toplu blok güncellemeleri").defaultValue(true).build());
-    private final Setting<Boolean> fBlockUpdate = sgFilters.add(new BoolSetting.Builder()
-        .name("block-update").description("Tek blok değişimi").defaultValue(true).build());
-    private final Setting<Boolean> fEntitySpawn = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-spawn").description("Yeni entity spawn").defaultValue(true).build());
-    private final Setting<Boolean> fEntityPos = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-pos").description("Entity hareket").defaultValue(true).build());
-    private final Setting<Boolean> fEntityLook = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-look").description("Entity bakış yönü").defaultValue(true).build());
-    private final Setting<Boolean> fEntityLookPos = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-lookpos").description("Entity hem hareket hem bakış").defaultValue(true).build());
-    private final Setting<Boolean> fEntityVel = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-vel").description("Entity hızı").defaultValue(false).build());
-    private final Setting<Boolean> fEntityAnim = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-anim").description("Entity animasyonu").defaultValue(false).build());
-    private final Setting<Boolean> fEntityStatus = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-status").description("Entity durumu (hasar/ölüm)").defaultValue(false).build());
-    private final Setting<Boolean> fEntityEquip = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-equip").description("Entity ekipman değişimi").defaultValue(false).build());
-    private final Setting<Boolean> fEntityTracker = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-tracker").description("Entity metadata").defaultValue(false).build());
-    private final Setting<Boolean> fEntityDestroy = sgFilters.add(new BoolSetting.Builder()
-        .name("entity-destroy").description("Entity yok edildi").defaultValue(true).build());
-    private final Setting<Boolean> fPlayerTeleport = sgFilters.add(new BoolSetting.Builder()
-        .name("player-teleport").description("Sen teleport edildin").defaultValue(true).build());
-    private final Setting<Boolean> fDisconnect = sgFilters.add(new BoolSetting.Builder()
-        .name("disconnect").description("Bağlantı kesildi").defaultValue(true).build());
-    private final Setting<Boolean> fTitle = sgFilters.add(new BoolSetting.Builder()
-        .name("title").description("Ekran başlığı").defaultValue(false).build());
-    private final Setting<Boolean> fSubtitle = sgFilters.add(new BoolSetting.Builder()
-        .name("subtitle").description("Alt başlık").defaultValue(false).build());
-    private final Setting<Boolean> fActionbar = sgFilters.add(new BoolSetting.Builder()
-        .name("actionbar").description("Action bar mesajı").defaultValue(false).build());
-    private final Setting<Boolean> fWorldTime = sgFilters.add(new BoolSetting.Builder()
-        .name("world-time").description("Dünya zamanı").defaultValue(false).build());
+    // FİLTRELER
+    private final Setting<Boolean> fAll = sgFilters.add(new BoolSetting.Builder()
+        .name("log-all").description("TÜM packetleri logla").defaultValue(false).build());
+
+    private final Setting<Boolean> fChunk = sgFilters.add(new BoolSetting.Builder()
+        .name("chunk").description("Chunk verileri (Data, Delta, Unload, Light)").defaultValue(true).build());
+        
+    private final Setting<Boolean> fBlock = sgFilters.add(new BoolSetting.Builder()
+        .name("block").description("Blok değişimleri (Update, Entity)").defaultValue(true).build());
+        
+    private final Setting<Boolean> fEntity = sgFilters.add(new BoolSetting.Builder()
+        .name("entity").description("Entity hareketleri, spawn, destroy").defaultValue(true).build());
+        
+    private final Setting<Boolean> fPlayer = sgFilters.add(new BoolSetting.Builder()
+        .name("player").description("Oyuncu teleport ve liste").defaultValue(true).build());
+        
+    // İSTENEN ÖZEL PAKETLER
+    private final Setting<Boolean> fActionBar = sgFilters.add(new BoolSetting.Builder()
+        .name("action-bar").description("Action Bar / Overlay mesajları").defaultValue(true).build());
+
     private final Setting<Boolean> fHealth = sgFilters.add(new BoolSetting.Builder()
-        .name("health").description("Can/açlık güncellemesi").defaultValue(false).build());
-    private final Setting<Boolean> fXP = sgFilters.add(new BoolSetting.Builder()
-        .name("xp").description("Deneyim güncellemesi").defaultValue(false).build());
-    private final Setting<Boolean> fExplosion = sgFilters.add(new BoolSetting.Builder()
-        .name("explosion").description("Patlama").defaultValue(true).build());
-    private final Setting<Boolean> fSound = sgFilters.add(new BoolSetting.Builder()
-        .name("sound").description("Ses efekti").defaultValue(false).build());
-    private final Setting<Boolean> fParticle = sgFilters.add(new BoolSetting.Builder()
-        .name("particle").description("Parçacık efekti").defaultValue(false).build());
-    private final Setting<Boolean> fKeepAlive = sgFilters.add(new BoolSetting.Builder()
-        .name("keep-alive").description("Bağlantı kontrolü").defaultValue(false).build());
-    private final Setting<Boolean> fUnloadChunk = sgFilters.add(new BoolSetting.Builder()
-        .name("unload-chunk").description("Chunk boşaltıldı").defaultValue(true).build());
-    private final Setting<Boolean> fLightData = sgFilters.add(new BoolSetting.Builder()
-        .name("light-data").description("Işık verisi").defaultValue(false).build());
-    private final Setting<Boolean> fBlockEntity = sgFilters.add(new BoolSetting.Builder()
-        .name("block-entity").description("Chest/spawner vb.").defaultValue(true).build());
-    private final Setting<Boolean> fContainerSlot = sgFilters.add(new BoolSetting.Builder()
-        .name("container-slot").description("Envanter slot değişimi").defaultValue(false).build());
-    private final Setting<Boolean> fOpenScreen = sgFilters.add(new BoolSetting.Builder()
-        .name("open-screen").description("Menü açıldı").defaultValue(false).build());
-    private final Setting<Boolean> fCloseScreen = sgFilters.add(new BoolSetting.Builder()
-        .name("close-screen").description("Menü kapandı").defaultValue(false).build());
-    private final Setting<Boolean> fContainerContent = sgFilters.add(new BoolSetting.Builder()
-        .name("container-content").description("Envanter içeriği").defaultValue(false).build());
+        .name("health").description("Can ve Açlık güncellemeleri").defaultValue(true).build());
+
+    private final Setting<Boolean> fWorldTime = sgFilters.add(new BoolSetting.Builder()
+        .name("world-time").description("Dünya zamanı güncellemeleri").defaultValue(true).build());
 
     private final Setting<Boolean> showStats = sgOutput.add(new BoolSetting.Builder()
         .name("show-stats").description("Kapatınca toplam sayıyı yaz").defaultValue(true).build());
@@ -96,7 +54,7 @@ public class PacketSniffer extends Module {
     private int tickCounter = 0;
 
     public PacketSniffer() {
-        super(MazaCategory.INSTANCE, "packet-sniffer", "Ayarlanabilir server packet sniffer");
+        super(MazaCategory.INSTANCE, "packet-sniffer", "Sunucu packetlerini dinler ve filtreler.");
     }
 
     @Override
@@ -105,57 +63,61 @@ public class PacketSniffer extends Module {
         PacketLogger.clear();
         updateFilters();
         tickCounter = 0;
-        info("Packet sniffer aktif - seçili packet türleri loglanıyor");
+        info("Packet sniffer aktif. Filtreler uygulandı.");
     }
 
     @Override
     public void onDeactivate() {
         PacketLogger.active = false;
         if (showStats.get()) {
-            info("Toplam %d packet yakalandı", PacketLogger.totalPackets);
+            info("Toplam %d packet yakalandı.", PacketLogger.totalPackets);
         }
-    }
-
-    // Ayarlar değişince filtreleri güncelle
-    @Override
-    public void onSettingChanged(Setting<?> setting) {
-        if (isActive()) updateFilters();
     }
 
     private void updateFilters() {
         PacketLogger.enabledTypes.clear();
-        if (fChunkData.get()) PacketLogger.enabledTypes.add("CHUNK_DATA");
-        if (fChunkDelta.get()) PacketLogger.enabledTypes.add("CHUNK_DELTA");
-        if (fBlockUpdate.get()) PacketLogger.enabledTypes.add("BLOCK_UPDATE");
-        if (fEntitySpawn.get()) PacketLogger.enabledTypes.add("ENTITY_SPAWN");
-        if (fEntityPos.get()) PacketLogger.enabledTypes.add("ENTITY_POS");
-        if (fEntityLook.get()) PacketLogger.enabledTypes.add("ENTITY_LOOK");
-        if (fEntityLookPos.get()) PacketLogger.enabledTypes.add("ENTITY_LOOKPOS");
-        if (fEntityVel.get()) PacketLogger.enabledTypes.add("ENTITY_VEL");
-        if (fEntityAnim.get()) PacketLogger.enabledTypes.add("ENTITY_ANIM");
-        if (fEntityStatus.get()) PacketLogger.enabledTypes.add("ENTITY_STATUS");
-        if (fEntityEquip.get()) PacketLogger.enabledTypes.add("ENTITY_EQUIP");
-        if (fEntityTracker.get()) PacketLogger.enabledTypes.add("ENTITY_TRACKER");
-        if (fEntityDestroy.get()) PacketLogger.enabledTypes.add("ENTITY_DESTROY");
-        if (fPlayerTeleport.get()) PacketLogger.enabledTypes.add("PLAYER_TELEPORT");
-        if (fDisconnect.get()) PacketLogger.enabledTypes.add("DISCONNECT");
-        if (fTitle.get()) PacketLogger.enabledTypes.add("TITLE");
-        if (fSubtitle.get()) PacketLogger.enabledTypes.add("SUBTITLE");
-        if (fActionbar.get()) PacketLogger.enabledTypes.add("ACTIONBAR");
-        if (fWorldTime.get()) PacketLogger.enabledTypes.add("WORLD_TIME");
-        if (fHealth.get()) PacketLogger.enabledTypes.add("HEALTH");
-        if (fXP.get()) PacketLogger.enabledTypes.add("XP");
-        if (fExplosion.get()) PacketLogger.enabledTypes.add("EXPLOSION");
-        if (fSound.get()) PacketLogger.enabledTypes.add("SOUND");
-        if (fParticle.get()) PacketLogger.enabledTypes.add("PARTICLE");
-        if (fKeepAlive.get()) PacketLogger.enabledTypes.add("KEEP_ALIVE");
-        if (fUnloadChunk.get()) PacketLogger.enabledTypes.add("UNLOAD_CHUNK");
-        if (fLightData.get()) PacketLogger.enabledTypes.add("LIGHT_DATA");
-        if (fBlockEntity.get()) PacketLogger.enabledTypes.add("BLOCK_ENTITY");
-        if (fContainerSlot.get()) PacketLogger.enabledTypes.add("CONTAINER_SLOT");
-        if (fOpenScreen.get()) PacketLogger.enabledTypes.add("OPEN_SCREEN");
-        if (fCloseScreen.get()) PacketLogger.enabledTypes.add("CLOSE_SCREEN");
-        if (fContainerContent.get()) PacketLogger.enabledTypes.add("CONTAINER_CONTENT");
+        
+        if (fAll.get()) {
+            PacketLogger.enabledTypes.add("ALL");
+            return;
+        }
+
+        if (fChunk.get()) {
+            PacketLogger.enabledTypes.add("ChunkData");
+            PacketLogger.enabledTypes.add("ChunkDeltaUpdate");
+            PacketLogger.enabledTypes.add("UnloadChunk");
+            PacketLogger.enabledTypes.add("LightData");
+        }
+        if (fBlock.get()) {
+            PacketLogger.enabledTypes.add("BlockUpdate");
+            PacketLogger.enabledTypes.add("BlockEntityUpdate");
+        }
+        if (fEntity.get()) {
+            PacketLogger.enabledTypes.add("EntitySpawn");
+            PacketLogger.enabledTypes.add("EntityPosition");
+            PacketLogger.enabledTypes.add("EntityLook");
+            PacketLogger.enabledTypes.add("EntityPositionLook");
+            PacketLogger.enabledTypes.add("EntityVelocityUpdate");
+            PacketLogger.enabledTypes.add("EntityAnimation");
+            PacketLogger.enabledTypes.add("EntityStatus");
+            PacketLogger.enabledTypes.add("EntityEquipmentUpdate");
+            PacketLogger.enabledTypes.add("EntityTrackerUpdate");
+            PacketLogger.enabledTypes.add("EntitiesDestroy");
+        }
+        if (fPlayer.get()) {
+            PacketLogger.enabledTypes.add("PlayerPositionLook");
+            PacketLogger.enabledTypes.add("PlayerList");
+        }
+        if (fActionBar.get()) {
+            PacketLogger.enabledTypes.add("OverlayMessage"); // 1.21.x'te ActionBar yerine bu gelir
+            PacketLogger.enabledTypes.add("ActionBar");       // Eski isim uyumluluğu
+        }
+        if (fHealth.get()) {
+            PacketLogger.enabledTypes.add("HealthUpdate");
+        }
+        if (fWorldTime.get()) {
+            PacketLogger.enabledTypes.add("WorldTimeUpdate");
+        }
     }
 
     @EventHandler
@@ -175,4 +137,4 @@ public class PacketSniffer extends Module {
             info(batch.get(i));
         }
     }
-          }
+}
