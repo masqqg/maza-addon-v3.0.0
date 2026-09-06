@@ -18,18 +18,17 @@ public class PacketLogger {
     public static void onPacket(Packet<?> packet) {
         if (!active) return;
 
-        // Dinamik olarak class ismini al (1.21.11'deki isim değişikliklerinden etkilenmez)
-        String type = packet.getClass().getSimpleName();
-        type = type.replace("S2CPacket", "").replace("C2SPacket", "").replace("Packet", "");
-
-        // Filtre kontrolü
-        if (!enabledTypes.contains("ALL") && !enabledTypes.contains(type)) {
-            return;
+        // toString() metodu obfuscation'dan etkilenmez
+        String info = packet.toString();
+        
+        // İlk 50 karakteri al (çok uzun olmasın)
+        if (info.length() > 50) {
+            info = info.substring(0, 50) + "...";
         }
 
         totalPackets++;
-        queue.add(type);
-        recentLogs.add(type);
+        queue.add(info);
+        recentLogs.add(info);
         
         if (recentLogs.size() > MAX_RECENT) {
             recentLogs.remove(0);
