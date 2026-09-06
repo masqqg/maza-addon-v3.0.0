@@ -3,6 +3,7 @@ package com.maza.addon;
 import com.maza.addon.modules.ActivityDebug;
 import com.maza.addon.modules.AirBypass;
 import com.maza.addon.modules.F3Finder;
+import com.maza.addon.modules.PacketSniffer;
 import com.maza.addon.modules.SpeedMineBypass;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.systems.modules.Modules;
@@ -10,9 +11,11 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
+        // Tüm modülleri kaydet
         Modules.get().add(new ActivityDebug());
         Modules.get().add(new AirBypass());
         Modules.get().add(new F3Finder());
+        Modules.get().add(new PacketSniffer());
         Modules.get().add(new SpeedMineBypass());
     }
 
