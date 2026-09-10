@@ -66,7 +66,7 @@ public class FakeOreFilter extends Module {
     // Veri Setleri
     private final Set<BlockPos> fakeOres = ConcurrentHashMap.newKeySet();
     private final Set<BlockPos> realOres = ConcurrentHashMap.newKeySet();
-    private final Set<BlockPos> scannedChunks = ConcurrentHashMap.newKeySet();
+    private final Set<ChunkPos> scannedChunks = ConcurrentHashMap.newKeySet();
 
     public FakeOreFilter() {
         super(MazaCategory.INSTANCE, "fake-ore-filter", "Detaylı sahte maden analizi ve filtreleme");
@@ -394,4 +394,4 @@ public class FakeOreFilter extends Module {
             }
         }
     }
-                                          }
+                    }
