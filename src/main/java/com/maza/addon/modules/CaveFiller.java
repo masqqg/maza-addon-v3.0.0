@@ -1,12 +1,9 @@
 package com.maza.addon.modules;
 
 import com.maza.addon.MazaCategory;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
-import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
@@ -23,7 +20,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CaveFiller extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgRender = settings.createGroup("Render");
 
     private final Setting<Integer> maxClusterSize = sgGeneral.add(new IntSetting.Builder()
         .name("max-cluster-size").description("Bu sayıdan küçük boşluklar kapatılır")
@@ -33,24 +29,19 @@ public class CaveFiller extends Module {
         .name("scan-radius").description("Tarama yarıçapı (chunk)")
         .defaultValue(4).min(1).max(16).sliderRange(1, 16).build());
 
-    private final Setting<Integer> renderRange = sgRender.add(new IntSetting.Builder()
-        .name("render-range").description("Max render mesafesi (blok)")
-        .defaultValue(96).min(16).max(256).sliderRange(16, 256).build());
-
-    private final Setting<SettingColor> stoneColor = sgRender.add(new ColorSetting.Builder()
-        .name("stone-color").description("Y>0 kapatma rengi (taş)")
-        .defaultValue(new SettingColor(125, 125, 125, 255)).build());
-
-    private final Setting<SettingColor> deepslateColor = sgRender.add(new ColorSetting.Builder()
-        .name("deepslate-color").description("Y<=0 kapatma rengi (deepslate)")
-        .defaultValue(new SettingColor(55, 55, 60, 255)).build());
-
     // Kapatılacak küçük boşluklar
     private final Set<BlockPos> fillBlocks = ConcurrentHashMap.newKeySet();
     private final Set<ChunkPos> scannedChunks = ConcurrentHashMap.newKeySet();
 
     public CaveFiller() {
-        super(MazaCategory.INSTANCE, "cave-filler", "Küçük boşlukları taş/deepslate ile kapatır");
+        super(MazaCategory.INSTANCE, "cave-filler", "Küçük boşlukları gerçek taş/deepslate ile kapatır");
+    }
+
+    /**
+     * Mixin tarafından çağrılır. Bu pozisyon doldurulmalı mı?
+     */
+    public boolean shouldFill(BlockPos pos) {
+        return fillBlocks.contains(pos);
     }
 
     @Override
@@ -58,14 +49,25 @@ public class CaveFiller extends Module {
         fillBlocks.clear();
         scannedChunks.clear();
         if (mc == null || mc.world == null || mc.player == null) return;
-        info("CaveFiller aktif. Küçük boşluklar kapatılıyor...");
+        info("CaveFiller aktif. Küçük boşluklar taşa dönüşüyor...");
         rescanAll();
+        // Chunk'ları yeniden çizdir
+        reloadChunks();
     }
 
     @Override
     public void onDeactivate() {
         fillBlocks.clear();
         scannedChunks.clear();
+        reloadChunks();
+    }
+
+    private void reloadChunks() {
+        try {
+            if (mc.worldRenderer != null) {
+                mc.worldRenderer.reload();
+            }
+        } catch (Exception ignored) {}
     }
 
     private void rescanAll() {
@@ -137,7 +139,6 @@ public class CaveFiller extends Module {
 
             for (int[] d : dirs) {
                 BlockPos next = current.add(d[0], d[1], d[2]);
-
                 int nx = next.getX();
                 int nz = next.getZ();
                 if (nx < chunkX || nx >= chunkX + 16 || nz < chunkZ || nz >= chunkZ + 16) continue;
@@ -154,36 +155,4 @@ public class CaveFiller extends Module {
         }
         return cluster;
     }
-
-    @EventHandler
-    private void onRender(Render3DEvent event) {
-        if (mc == null || mc.player == null || event == null || event.renderer == null) return;
-
-        double px = mc.player.getX();
-        double py = mc.player.getY();
-        double pz = mc.player.getZ();
-        double maxDist = renderRange.get();
-        double maxDistSq = maxDist * maxDist;
-
-        int rendered = 0;
-
-        for (BlockPos pos : fillBlocks) {
-            if (rendered > 3000) break;
-            try {
-                double dx = pos.getX() + 0.5 - px;
-                double dy = pos.getY() + 0.5 - py;
-                double dz = pos.getZ() + 0.5 - pz;
-                if (dx * dx + dy * dy + dz * dz > maxDistSq) continue;
-
-                SettingColor color = pos.getY() > 0 ? stoneColor.get() : deepslateColor.get();
-
-                event.renderer.box(
-                    pos.getX(), pos.getY(), pos.getZ(),
-                    pos.getX() + 1, pos.getY() + 1, pos.getZ() + 1,
-                    color, color, ShapeMode.Sides, 0
-                );
-                rendered++;
-            } catch (Exception ignored) {}
-        }
-    }
-    }
+}
