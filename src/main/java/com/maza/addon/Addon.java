@@ -2,9 +2,9 @@ package com.maza.addon;
 
 import com.maza.addon.modules.ActivityDebug;
 import com.maza.addon.modules.AirBypass;
+import com.maza.addon.modules.CaveFiller;
 import com.maza.addon.modules.ChunkMarker;
 import com.maza.addon.modules.F3Finder;
-import com.maza.addon.modules.FakeOreFilter;
 import com.maza.addon.modules.PacketSniffer;
 import com.maza.addon.modules.SpeedMineBypass;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -15,9 +15,9 @@ public class Addon extends MeteorAddon {
     public void onInitialize() {
         Modules.get().add(new ActivityDebug());
         Modules.get().add(new AirBypass());
+        Modules.get().add(new CaveFiller());
         Modules.get().add(new ChunkMarker());
         Modules.get().add(new F3Finder());
-        Modules.get().add(new FakeOreFilter());
         Modules.get().add(new PacketSniffer());
         Modules.get().add(new SpeedMineBypass());
     }
