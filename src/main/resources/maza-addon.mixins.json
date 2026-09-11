@@ -1,11 +1,12 @@
 {
-     "required": true,
-     "package": "com.maza.addon.mixin",
-     "compatibilityLevel": "JAVA_21",
-     "client": [
-       "PacketSnifferMixin"
-     ],
-     "injectors": {
-       "defaultRequire": 1
-     }
+  "required": true,
+  "package": "com.maza.addon.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PacketSnifferMixin",
+    "CaveFillerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }
