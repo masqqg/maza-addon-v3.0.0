@@ -4,7 +4,12 @@ import com.maza.addon.MazaCategory;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.ColorSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -16,10 +21,18 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.WorldChunk;
 
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Set;
 
 public class SusChunkFinder extends Module {
 
@@ -37,7 +50,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> scanRadius = sgGeneral.add(
         new IntSetting.Builder()
             .name("scan-radius")
-            .description("Oyuncunun etrafında taranacak chunk yarıçapı.")
+            .description("Tarama yarıçapı.")
             .defaultValue(8)
             .min(1)
             .max(32)
@@ -59,7 +72,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minimumScore = sgDetection.add(
         new IntSetting.Builder()
             .name("minimum-score")
-            .description("Chunk'ın ESP olarak gösterilmesi için gereken minimum skor.")
+            .description("ESP için gereken minimum SUS skoru.")
             .defaultValue(45)
             .min(1)
             .max(200)
@@ -67,10 +80,50 @@ public class SusChunkFinder extends Module {
             .build()
     );
 
+    private final Setting<Boolean> detectBudding = sgDetection.add(
+        new BoolSetting.Builder()
+            .name("budding-amethyst")
+            .description("Budding Amethyst tespiti.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> detectClusters = sgDetection.add(
+        new BoolSetting.Builder()
+            .name("amethyst-clusters")
+            .description("Amethyst Cluster tespiti.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> detectBuds = sgDetection.add(
+        new BoolSetting.Builder()
+            .name("amethyst-buds")
+            .description("Amethyst bud tespiti.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> detectVines = sgDetection.add(
+        new BoolSetting.Builder()
+            .name("cave-vines")
+            .description("Cave Vines tespiti.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> clusterAnalysis = sgDetection.add(
+        new BoolSetting.Builder()
+            .name("cluster-analysis")
+            .description("Yakın hedef blokları cluster olarak analiz eder.")
+            .defaultValue(true)
+            .build()
+    );
+
     private final Setting<Integer> rescanDelay = sgScan.add(
         new IntSetting.Builder()
             .name("rescan-delay")
-            .description("Aynı chunk'ın tekrar taranması için minimum süre.")
+            .description("Aynı chunk'ın tekrar taranması için bekleme.")
             .defaultValue(100)
             .min(10)
             .max(2000)
@@ -78,42 +131,18 @@ public class SusChunkFinder extends Module {
             .build()
     );
 
-    private final Setting<Boolean> scanAmethyst = sgDetection.add(
-        new BoolSetting.Builder()
-            .name("amethyst")
-            .description("Amethyst bloklarını analiz eder.")
-            .defaultValue(true)
-            .build()
-    );
-
-    private final Setting<Boolean> scanCaveVines = sgDetection.add(
-        new BoolSetting.Builder()
-            .name("cave-vines")
-            .description("Cave Vines bloklarını analiz eder.")
-            .defaultValue(true)
-            .build()
-    );
-
-    private final Setting<Boolean> useClusters = sgDetection.add(
-        new BoolSetting.Builder()
-            .name("clusters")
-            .description("Yakın hedef blokları cluster olarak analiz eder.")
-            .defaultValue(true)
-            .build()
-    );
-
-    private final Setting<Boolean> prioritizeDirection = sgScan.add(
+    private final Setting<Boolean> directionPriority = sgScan.add(
         new BoolSetting.Builder()
             .name("direction-priority")
-            .description("Oyuncunun baktığı yöne doğru olan chunk'lara öncelik verir.")
+            .description("Oyuncunun baktığı yöndeki chunk'lara öncelik verir.")
             .defaultValue(true)
             .build()
     );
 
-    private final Setting<Integer> baseBlocksPerTick = sgPerformance.add(
+    private final Setting<Integer> blocksPerTick = sgPerformance.add(
         new IntSetting.Builder()
             .name("blocks-per-tick")
-            .description("Normal koşullarda tick başına taranabilecek blok sayısı.")
+            .description("Tick başına temel tarama bütçesi.")
             .defaultValue(1500)
             .min(100)
             .max(10000)
@@ -124,7 +153,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Boolean> adaptivePerformance = sgPerformance.add(
         new BoolSetting.Builder()
             .name("adaptive-performance")
-            .description("FPS'e göre tarama hızını otomatik ayarlar.")
+            .description("FPS'e göre tarama hızını ayarlar.")
             .defaultValue(true)
             .build()
     );
@@ -132,7 +161,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minimumFps = sgPerformance.add(
         new IntSetting.Builder()
             .name("minimum-fps")
-            .description("Tarama sırasında korunması hedeflenen minimum FPS.")
+            .description("Tarama sırasında hedeflenen minimum FPS.")
             .defaultValue(45)
             .min(15)
             .max(240)
@@ -140,10 +169,22 @@ public class SusChunkFinder extends Module {
             .build()
     );
 
+    private final Setting<Double> renderHeight = sgRender.add(
+        new DoubleSetting.Builder()
+            .name("render-height")
+            .description("Yatay chunk ESP'sinin kalınlığı.")
+            .defaultValue(0.08)
+            .min(0.01)
+            .max(2.0)
+            .sliderMax(1.0)
+            .decimalPlaces(2)
+            .build()
+    );
+
     private final Setting<Integer> renderRange = sgRender.add(
         new IntSetting.Builder()
             .name("render-range")
-            .description("SUS chunk'larının maksimum render mesafesi.")
+            .description("ESP render mesafesi.")
             .defaultValue(12)
             .min(1)
             .max(32)
@@ -151,19 +192,39 @@ public class SusChunkFinder extends Module {
             .build()
     );
 
-    private final Setting<Boolean> renderScore = sgRender.add(
+    private final Setting<Boolean> renderAtPlayerY = sgRender.add(
         new BoolSetting.Builder()
-            .name("render-score")
-            .description("ESP üzerinde skor gösterimini etkinleştirir.")
-            .defaultValue(false)
+            .name("render-at-player-y")
+            .description("Yatay ESP'yi oyuncunun bulunduğu Y seviyesinde gösterir.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Integer> fixedRenderY = sgRender.add(
+        new IntSetting.Builder()
+            .name("fixed-render-y")
+            .description("Oyuncu Y seviyesi kullanılmıyorsa ESP'nin Y seviyesi.")
+            .defaultValue(0)
+            .min(-64)
+            .max(320)
+            .sliderMax(100)
+            .visible(() -> !renderAtPlayerY.get())
+            .build()
+    );
+
+    private final Setting<ShapeMode> shapeMode = sgRender.add(
+        new EnumSetting.Builder<ShapeMode>()
+            .name("shape-mode")
+            .description("Chunk ESP şekli.")
+            .defaultValue(ShapeMode.Both)
             .build()
     );
 
     private final Setting<SettingColor> sideColor = sgRender.add(
         new ColorSetting.Builder()
             .name("side-color")
-            .description("ESP dolgu rengi.")
-            .defaultValue(new SettingColor(255, 40, 40, 35))
+            .description("ESP dolgu rengi ve saydamlığı.")
+            .defaultValue(new SettingColor(255, 30, 30, 35))
             .build()
     );
 
@@ -171,14 +232,14 @@ public class SusChunkFinder extends Module {
         new ColorSetting.Builder()
             .name("line-color")
             .description("ESP çizgi rengi.")
-            .defaultValue(new SettingColor(255, 40, 40, 220))
+            .defaultValue(new SettingColor(255, 30, 30, 230))
             .build()
     );
 
     private final Setting<Boolean> debug = sgDebug.add(
         new BoolSetting.Builder()
             .name("debug")
-            .description("Tarama istatistiklerini chat'e yazdırır.")
+            .description("Debug bilgilerini gösterir.")
             .defaultValue(false)
             .build()
     );
@@ -187,12 +248,18 @@ public class SusChunkFinder extends Module {
        TARGET BLOCKS
        ============================================================ */
 
-    private static final Set<Block> AMETHYST_BLOCKS = Set.of(
-        Blocks.BUDDING_AMETHYST,
-        Blocks.AMETHYST_CLUSTER,
-        Blocks.LARGE_AMETHYST_BUD,
+    private static final Set<Block> BUDDING_BLOCKS = Set.of(
+        Blocks.BUDDING_AMETHYST
+    );
+
+    private static final Set<Block> CLUSTER_BLOCKS = Set.of(
+        Blocks.AMETHYST_CLUSTER
+    );
+
+    private static final Set<Block> BUD_BLOCKS = Set.of(
+        Blocks.SMALL_AMETHYST_BUD,
         Blocks.MEDIUM_AMETHYST_BUD,
-        Blocks.SMALL_AMETHYST_BUD
+        Blocks.LARGE_AMETHYST_BUD
     );
 
     private static final Set<Block> VINE_BLOCKS = Set.of(
@@ -201,25 +268,31 @@ public class SusChunkFinder extends Module {
     );
 
     /* ============================================================
-       INTERNAL STATE
+       QUEUES / CACHE
        ============================================================ */
 
-    private final PriorityQueue<ChunkTask> scanQueue =
+    private final PriorityQueue<ChunkTask> queue =
         new PriorityQueue<>(Comparator.comparingDouble(ChunkTask::priority));
 
+    private final Set<Long> queuedChunks = new HashSet<>();
+
     private final Map<Long, ChunkResult> results = new HashMap<>();
+
     private final Map<Long, Long> lastScanned = new HashMap<>();
-    private final Set<Long> queued = new HashSet<>();
 
     private ScanTask currentTask;
+
+    /* ============================================================
+       STATISTICS
+       ============================================================ */
 
     private long tickCounter;
     private long scannedChunks;
     private long scannedBlocks;
+    private long foundTargets;
     private long suspiciousChunks;
-    private long targetBlocks;
 
-    private int lastFps = 60;
+    private int currentFps = 60;
 
     /* ============================================================
        CONSTRUCTOR
@@ -229,7 +302,7 @@ public class SusChunkFinder extends Module {
         super(
             MazaCategory.INSTANCE,
             "sus-chunk-finder",
-            "Amethyst ve cave-vine yoğunluğuna göre şüpheli chunk'ları analiz eder."
+            "Şüpheli chunk'ları detaylı şekilde analiz eder."
         );
     }
 
@@ -239,16 +312,16 @@ public class SusChunkFinder extends Module {
 
     @Override
     public void onActivate() {
-        clearScanner();
+        clearAll();
 
         if (mc == null || mc.player == null || mc.world == null) {
             return;
         }
 
-        buildQueue();
+        rebuildQueue();
 
         if (debug.get()) {
-            info("SusChunkFinder aktif. İlk tarama kuyruğu oluşturuldu.");
+            info("SusChunkFinder aktif.");
         }
     }
 
@@ -258,11 +331,7 @@ public class SusChunkFinder extends Module {
 
     @Override
     public void onDeactivate() {
-        clearScanner();
-
-        if (debug.get()) {
-            info("SusChunkFinder kapatıldı.");
-        }
+        clearAll();
     }
 
     /* ============================================================
@@ -279,66 +348,49 @@ public class SusChunkFinder extends Module {
 
         updateFps();
 
-        /*
-         * Her birkaç tick'te bir yeni chunk'ları kuyruğa ekle.
-         * Böylece oyuncu hareket ettiğinde sistem yeni alanı otomatik
-         * olarak taramaya başlar.
-         */
         if (tickCounter % 5 == 0) {
             refreshQueue();
         }
 
-        /*
-         * Önce aktif task'ı devam ettir.
-         */
         if (currentTask != null) {
-            processCurrentTask();
+            processTask();
 
-            /*
-             * Task bitmediyse bu tick'te yeni chunk başlatma.
-             */
             if (currentTask != null) {
                 return;
             }
         }
 
-        /*
-         * Kuyruktan sıradaki chunk'ı al.
-         */
         startNextTask();
     }
 
     /* ============================================================
-       QUEUE CREATION
+       QUEUE
        ============================================================ */
 
-    private void buildQueue() {
-        scanQueue.clear();
-        queued.clear();
+    private void rebuildQueue() {
+        queue.clear();
+        queuedChunks.clear();
 
-        if (mc == null || mc.player == null) {
-            return;
-        }
-
-        int playerChunkX = mc.player.getBlockX() >> 4;
-        int playerChunkZ = mc.player.getBlockZ() >> 4;
+        int centerX = mc.player.getBlockX() >> 4;
+        int centerZ = mc.player.getBlockZ() >> 4;
 
         int radius = scanRadius.get();
 
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
 
-                int chunkX = playerChunkX + dx;
-                int chunkZ = playerChunkZ + dz;
+                int chunkX = centerX + x;
+                int chunkZ = centerZ + z;
 
-                double priority = calculatePriority(
+                if (!isChunkLoaded(chunkX, chunkZ)) {
+                    continue;
+                }
+
+                queueChunk(
                     chunkX,
                     chunkZ,
-                    playerChunkX,
-                    playerChunkZ
+                    calculatePriority(chunkX, chunkZ, centerX, centerZ)
                 );
-
-                queueChunk(chunkX, chunkZ, priority);
             }
         }
     }
@@ -348,20 +400,20 @@ public class SusChunkFinder extends Module {
             return;
         }
 
-        int playerChunkX = mc.player.getBlockX() >> 4;
-        int playerChunkZ = mc.player.getBlockZ() >> 4;
+        int centerX = mc.player.getBlockX() >> 4;
+        int centerZ = mc.player.getBlockZ() >> 4;
 
         int radius = scanRadius.get();
 
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
 
-                int chunkX = playerChunkX + dx;
-                int chunkZ = playerChunkZ + dz;
+                int chunkX = centerX + x;
+                int chunkZ = centerZ + z;
 
                 long key = ChunkPos.toLong(chunkX, chunkZ);
 
-                if (queued.contains(key)) {
+                if (queuedChunks.contains(key)) {
                     continue;
                 }
 
@@ -376,29 +428,29 @@ public class SusChunkFinder extends Module {
                     continue;
                 }
 
-                double priority = calculatePriority(
+                queueChunk(
                     chunkX,
                     chunkZ,
-                    playerChunkX,
-                    playerChunkZ
+                    calculatePriority(chunkX, chunkZ, centerX, centerZ)
                 );
-
-                queueChunk(chunkX, chunkZ, priority);
             }
         }
 
-        cleanupOldResults();
+        cleanupCache();
     }
 
     private void queueChunk(int chunkX, int chunkZ, double priority) {
         long key = ChunkPos.toLong(chunkX, chunkZ);
 
-        if (queued.contains(key)) {
+        if (queuedChunks.contains(key)) {
             return;
         }
 
-        queued.add(key);
-        scanQueue.offer(new ChunkTask(chunkX, chunkZ, priority));
+        queuedChunks.add(key);
+
+        queue.offer(
+            new ChunkTask(chunkX, chunkZ, priority)
+        );
     }
 
     /* ============================================================
@@ -408,116 +460,117 @@ public class SusChunkFinder extends Module {
     private double calculatePriority(
         int chunkX,
         int chunkZ,
-        int playerChunkX,
-        int playerChunkZ
+        int centerX,
+        int centerZ
     ) {
-        double dx = chunkX - playerChunkX;
-        double dz = chunkZ - playerChunkZ;
+        double dx = chunkX - centerX;
+        double dz = chunkZ - centerZ;
 
-        double distance = Math.sqrt(dx * dx + dz * dz);
+        double distance = Math.sqrt(
+            dx * dx + dz * dz
+        );
 
-        /*
-         * Yakın chunk = daha yüksek öncelik.
-         */
         double priority = distance;
 
-        if (prioritizeDirection.get() && mc != null && mc.player != null) {
-
-            Vec3d look = mc.player.getRotationVec(1.0f);
-
-            double length = Math.sqrt(look.x * look.x + look.z * look.z);
-
-            if (length > 0.001) {
-
-                double normalizedX = look.x / length;
-                double normalizedZ = look.z / length;
-
-                double chunkDirectionX = dx;
-                double chunkDirectionZ = dz;
-
-                double chunkLength = Math.sqrt(
-                    chunkDirectionX * chunkDirectionX +
-                    chunkDirectionZ * chunkDirectionZ
-                );
-
-                if (chunkLength > 0.001) {
-
-                    chunkDirectionX /= chunkLength;
-                    chunkDirectionZ /= chunkLength;
-
-                    double dot =
-                        normalizedX * chunkDirectionX +
-                        normalizedZ * chunkDirectionZ;
-
-                    /*
-                     * Baktığımız yöndeki chunk'ları öne al.
-                     */
-                    priority -= dot * 2.5;
-                }
-            }
+        if (!directionPriority.get()) {
+            return priority;
         }
+
+        if (mc == null || mc.player == null) {
+            return priority;
+        }
+
+        Vec3d look = mc.player.getRotationVec(1.0f);
+
+        double horizontalLength =
+            Math.sqrt(look.x * look.x + look.z * look.z);
+
+        if (horizontalLength <= 0.001) {
+            return priority;
+        }
+
+        double lookX = look.x / horizontalLength;
+        double lookZ = look.z / horizontalLength;
+
+        double chunkLength =
+            Math.sqrt(dx * dx + dz * dz);
+
+        if (chunkLength <= 0.001) {
+            return priority;
+        }
+
+        double directionX = dx / chunkLength;
+        double directionZ = dz / chunkLength;
+
+        double dot =
+            lookX * directionX +
+            lookZ * directionZ;
+
+        priority -= dot * 2.5;
 
         return priority;
     }
 
     /* ============================================================
-       START TASK
+       TASK START
        ============================================================ */
 
     private void startNextTask() {
-        while (!scanQueue.isEmpty()) {
+        while (!queue.isEmpty()) {
 
-            ChunkTask task = scanQueue.poll();
+            ChunkTask task = queue.poll();
 
             if (task == null) {
                 return;
             }
 
-            long key = task.key();
-
-            queued.remove(key);
+            queuedChunks.remove(task.key());
 
             if (!isChunkLoaded(task.chunkX, task.chunkZ)) {
                 continue;
             }
 
-            Long previous = lastScanned.get(key);
+            Long previous = lastScanned.get(task.key());
 
             if (previous != null &&
                 tickCounter - previous < rescanDelay.get()) {
                 continue;
             }
 
-            WorldChunk chunk = getChunk(task.chunkX, task.chunkZ);
+            WorldChunk chunk =
+                getChunk(task.chunkX, task.chunkZ);
 
             if (chunk == null) {
                 continue;
             }
 
-            currentTask = new ScanTask(chunk);
+            currentTask =
+                new ScanTask(chunk);
 
             return;
         }
     }
 
     /* ============================================================
-       PROCESS CURRENT TASK
+       TASK PROCESSING
        ============================================================ */
 
-    private void processCurrentTask() {
+    private void processTask() {
         if (currentTask == null) {
             return;
         }
 
-        int budget = getCurrentBudget();
+        int budget = getScanBudget();
 
-        int processed = 0;
+        for (int i = 0; i < budget; i++) {
 
-        while (processed < budget && currentTask.hasNext()) {
+            if (currentTask.finished()) {
+                finishTask();
+                return;
+            }
 
-            currentTask.scanNextBlock();
+            currentTask.scanNext();
 
-            processed++;
             scannedBlocks++;
 
             if (currentTask.finished()) {
@@ -528,7 +581,7 @@ public class SusChunkFinder extends Module {
     }
 
     /* ============================================================
-       FINISH TASK
+       TASK FINISH
        ============================================================ */
 
     private void finishTask() {
@@ -536,21 +589,23 @@ public class SusChunkFinder extends Module {
             return;
         }
 
-        ChunkResult result = currentTask.buildResult();
+        ChunkResult result =
+            currentTask.createResult();
 
         long key = result.key;
 
         results.put(key, result);
 
-        lastScanned.put(key, tickCounter);
+        lastScanned.put(
+            key,
+            tickCounter
+        );
 
         scannedChunks++;
 
-        if (result.targetCount > 0) {
-            targetBlocks += result.targetCount;
-        }
+        foundTargets += result.targetCount;
 
-        if (result.score >= getEffectiveMinimumScore()) {
+        if (result.score >= effectiveMinimumScore()) {
             suspiciousChunks++;
         }
 
@@ -561,51 +616,41 @@ public class SusChunkFinder extends Module {
        PERFORMANCE
        ============================================================ */
 
-    private int getCurrentBudget() {
-
-        int base = baseBlocksPerTick.get();
+    private int getScanBudget() {
+        int base = blocksPerTick.get();
 
         if (!adaptivePerformance.get()) {
             return base;
         }
 
-        int fps = lastFps;
-
         int minimum = minimumFps.get();
 
-        if (fps <= minimum) {
+        if (currentFps < minimum) {
             return Math.max(100, base / 4);
         }
 
-        if (fps <= minimum + 10) {
+        if (currentFps < minimum + 10) {
             return Math.max(150, base / 2);
         }
 
-        if (fps >= minimum + 50) {
-            return Math.min(base * 2, 10000);
+        if (currentFps > minimum + 50) {
+            return Math.min(10000, base * 2);
         }
 
         return base;
     }
 
     private void updateFps() {
-        if (mc == null) {
-            return;
-        }
-
-        /*
-         * MinecraftClient#getCurrentFps API sürüme göre değişebildiği
-         * için güvenli fallback kullanıyoruz.
-         */
         try {
-            lastFps = MinecraftClient.getInstance().getCurrentFps();
+            currentFps =
+                MinecraftClient.getInstance().getCurrentFps();
         }
         catch (Throwable ignored) {
-            lastFps = 60;
+            currentFps = 60;
         }
 
-        if (lastFps <= 0) {
-            lastFps = 60;
+        if (currentFps <= 0) {
+            currentFps = 60;
         }
     }
 
@@ -613,62 +658,79 @@ public class SusChunkFinder extends Module {
        SCORE
        ============================================================ */
 
-    private int getEffectiveMinimumScore() {
-
+    private int effectiveMinimumScore() {
         int base = minimumScore.get();
 
-        /*
-         * Sensitivity yükseldikçe daha düşük skorlu sonuçlara izin ver.
-         */
         int reduction =
             (int) ((100.0 - sensitivity.get()) * 0.25);
 
-        return Math.max(1, base - reduction);
+        return Math.max(
+            1,
+            base - reduction
+        );
     }
 
     private int calculateScore(ScanData data) {
-
         int score = 0;
 
         /*
-         * Temel hedef yoğunluğu.
+         * Genel hedef yoğunluğu.
          */
-        score += Math.min(data.targetCount * 2, 40);
+        score += Math.min(
+            data.targetCount * 2,
+            40
+        );
 
         /*
-         * Budding Amethyst çok daha güçlü sinyal.
+         * Budding Amethyst güçlü sinyal.
          */
-        score += Math.min(data.buddingCount * 8, 40);
+        score += Math.min(
+            data.buddingCount * 10,
+            50
+        );
 
         /*
-         * Amethyst cluster.
+         * Cluster.
          */
-        score += Math.min(data.clusterCount * 4, 25);
+        score += Math.min(
+            data.clusterCount * 4,
+            30
+        );
 
         /*
-         * Bud çeşitleri.
+         * Bud.
          */
-        score += Math.min(data.budCount * 2, 20);
+        score += Math.min(
+            data.budCount * 2,
+            20
+        );
 
         /*
-         * Cave vines.
+         * Cave Vines.
          */
-        score += Math.min(data.caveVineCount * 2, 25);
+        score += Math.min(
+            data.vineCount * 2,
+            25
+        );
 
         /*
-         * Farklı hedef türlerinin bulunması.
+         * Farklı hedef tipleri.
          */
-        score += data.distinctTargetTypes * 5;
+        score +=
+            data.distinctTypes * 5;
 
         /*
-         * Cluster analizi.
+         * Cluster yoğunluğu.
          */
         if (data.largestCluster >= 2) {
-            score += Math.min(data.largestCluster * 3, 30);
+            score += Math.min(
+                data.largestCluster * 3,
+                30
+            );
         }
 
         /*
-         * Yoğunluk.
+         * Yoğunluk bonusları.
          */
         if (data.density > 0.0025) {
             score += 10;
@@ -678,46 +740,4 @@ public class SusChunkFinder extends Module {
             score += 10;
         }
 
-        if (data.density > 0.01) {
-            score += 15;
-        }
-
-        /*
-         * Hassasiyet.
-         */
-        double sensitivityMultiplier =
-            0.60 + (sensitivity.get() / 100.0) * 0.60;
-
-        score = (int) (score * sensitivityMultiplier);
-
-        return score;
-    }
-
-    /* ============================================================
-       CLEANUP
-       ============================================================ */
-
-    private void cleanupOldResults() {
-
-        if (mc == null || mc.player == null) {
-            return;
-        }
-
-        int playerChunkX = mc.player.getBlockX() >> 4;
-        int playerChunkZ = mc.player.getBlockZ() >> 4;
-
-        int maxDistance = scanRadius.get() + 4;
-
-        Iterator<Map.Entry<Long, ChunkResult>> iterator =
-            results.entrySet().iterator();
-
-        while (iterator.hasNext()) {
-
-            Map.Entry<Long, ChunkResult> entry = iterator.next();
-
-            ChunkPos pos = new ChunkPos(entry.getKey());
-
-            int dx = pos.x - playerChunkX;
-            int dz = pos.z - playerChunkZ;
-
-            if (Math.abs
+ 
