@@ -1,25 +1,16 @@
 package com.maza.addon;
 
-import com.maza.addon.modules.ActivityDebug;
-import com.maza.addon.modules.AirBypass;
-import com.maza.addon.modules.ChunkMarker;
-import com.maza.addon.modules.F3Finder;
-import com.maza.addon.modules.OreFilter;
-import com.maza.addon.modules.PacketSniffer;
-import com.maza.addon.modules.SpeedMineBypass;
+import com.maza.addon.modules.StorageESP;
+import com.maza.addon.modules.SusChunkFinder;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 
 public class Addon extends MeteorAddon {
+
     @Override
     public void onInitialize() {
-        Modules.get().add(new ActivityDebug());
-        Modules.get().add(new AirBypass());
-        Modules.get().add(new ChunkMarker());
-        Modules.get().add(new F3Finder());
-        Modules.get().add(new OreFilter());
-        Modules.get().add(new PacketSniffer());
-        Modules.get().add(new SpeedMineBypass());
+        Modules.get().add(new SusChunkFinder());
+        Modules.get().add(new StorageESP());
     }
 
     @Override
