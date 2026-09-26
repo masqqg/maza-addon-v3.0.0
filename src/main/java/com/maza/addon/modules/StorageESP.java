@@ -8,8 +8,6 @@ import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingColor;
-import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 
@@ -26,11 +24,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class StorageESP extends Module {
-    private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgStorage = settings.createGroup("Storage");
-    private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup general = settings.getDefaultGroup();
+    private final SettingGroup storageGroup = settings.createGroup("Storage");
+    private final SettingGroup renderGroup = settings.createGroup("Render");
 
-    private final Setting<Integer> minY = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> minY = general.add(new IntSetting.Builder()
         .name("min-y")
         .description("Minimum Y level.")
         .defaultValue(-64)
@@ -38,9 +36,10 @@ public class StorageESP extends Module {
         .max(0)
         .sliderMin(-64)
         .sliderMax(0)
-        .build());
+        .build()
+    );
 
-    private final Setting<Integer> maxY = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> maxY = general.add(new IntSetting.Builder()
         .name("max-y")
         .description("Maximum Y level.")
         .defaultValue(0)
@@ -48,83 +47,93 @@ public class StorageESP extends Module {
         .max(0)
         .sliderMin(-64)
         .sliderMax(0)
-        .build());
+        .build()
+    );
 
-    private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> range = general.add(new IntSetting.Builder()
         .name("range")
-        .description("Storage ESP range in chunks.")
+        .description("Maximum chunk distance to scan.")
         .defaultValue(4)
         .min(1)
         .max(16)
         .sliderMin(1)
         .sliderMax(16)
-        .build());
+        .build()
+    );
 
-    private final Setting<Integer> scanDelay = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> scanDelay = general.add(new IntSetting.Builder()
         .name("scan-delay")
-        .description("Delay between storage scans in milliseconds.")
+        .description("Delay between scans in milliseconds.")
         .defaultValue(500)
         .min(100)
         .max(5000)
         .sliderMin(100)
         .sliderMax(5000)
-        .build());
+        .build()
+    );
 
-    private final Setting<Boolean> chests = sgStorage.add(new BoolSetting.Builder()
+    private final Setting<Boolean> chests = storageGroup.add(new BoolSetting.Builder()
         .name("chests")
         .defaultValue(true)
-        .build());
+        .build()
+    );
 
-    private final Setting<Boolean> barrels = sgStorage.add(new BoolSetting.Builder()
+    private final Setting<Boolean> barrels = storageGroup.add(new BoolSetting.Builder()
         .name("barrels")
         .defaultValue(true)
-        .build());
+        .build()
+    );
 
-    private final Setting<Boolean> shulkers = sgStorage.add(new BoolSetting.Builder()
+    private final Setting<Boolean> shulkers = storageGroup.add(new BoolSetting.Builder()
         .name("shulkers")
         .defaultValue(true)
-        .build());
+        .build()
+    );
 
-    private final Setting<Boolean> enderChests = sgStorage.add(new BoolSetting.Builder()
+    private final Setting<Boolean> enderChests = storageGroup.add(new BoolSetting.Builder()
         .name("ender-chests")
         .defaultValue(true)
-        .build());
+        .build()
+    );
 
-    private final Setting<Boolean> hoppers = sgStorage.add(new BoolSetting.Builder()
+    private final Setting<Boolean> hoppers = storageGroup.add(new BoolSetting.Builder()
         .name("hoppers")
         .defaultValue(true)
-        .build());
+        .build()
+    );
 
-    private final Setting<ShapeMode> shapeMode = sgRender.add(
+    private final Setting<ShapeMode> shapeMode = renderGroup.add(
         new EnumSetting.Builder<ShapeMode>()
             .name("shape-mode")
             .defaultValue(ShapeMode.Both)
             .build()
     );
 
-    private final Setting<SettingColor> sideColor = sgRender.add(
-        new ColorSetting.Builder()
-            .name("side-color")
-            .defaultValue(new SettingColor(0, 255, 255, 45))
-            .build()
-    );
+    private final Setting<meteordevelopment.meteorclient.utils.render.color.SettingColor> sideColor =
+        renderGroup.add(
+            new ColorSetting.Builder()
+                .name("side-color")
+                .defaultValue(new meteordevelopment.meteorclient.utils.render.color.SettingColor(0, 255, 255, 45))
+                .build()
+        );
 
-    private final Setting<SettingColor> lineColor = sgRender.add(
-        new ColorSetting.Builder()
-            .name("line-color")
-            .defaultValue(new SettingColor(0, 255, 255, 255))
-            .build()
-    );
+    private final Setting<meteordevelopment.meteorclient.utils.render.color.SettingColor> lineColor =
+        renderGroup.add(
+            new ColorSetting.Builder()
+                .name("line-color")
+                .defaultValue(new meteordevelopment.meteorclient.utils.render.color.SettingColor(0, 255, 255, 255))
+                .build()
+        );
 
     private final List<BlockPos> storage = new ArrayList<>();
 
-    private long lastScan = 0L;
+    private long lastScan;
 
     public StorageESP() {
         super(
             MazaCategory.INSTANCE,
             "maza-storage-esp",
-            "Highlights storage blocks without constantly rescanning the world."
+            "Highlights storage blocks without constantly scanning the world."
         );
     }
 
@@ -182,7 +191,6 @@ public class StorageESP extends Module {
                     0
                 );
             } catch (Exception ignored) {
-                // Prevent a single invalid block entity from crashing rendering.
             }
         }
     }
@@ -191,7 +199,6 @@ public class StorageESP extends Module {
         try {
             scanLoadedChunks();
         } catch (Exception ignored) {
-            // Keep the module alive if the server changes chunks while scanning.
         }
     }
 
@@ -207,16 +214,14 @@ public class StorageESP extends Module {
         for (int dx = -chunkRange; dx <= chunkRange; dx++) {
             for (int dz = -chunkRange; dz <= chunkRange; dz++) {
 
-                if (mc.world == null || mc.player == null) {
-                    return;
-                }
-
-                int chunkX = playerChunkX + dx;
-                int chunkZ = playerChunkZ + dz;
+                if (mc.world == null || mc.player == null) return;
 
                 try {
                     WorldChunk chunk = mc.world.getChunkManager()
-                        .getWorldChunk(chunkX, chunkZ);
+                        .getWorldChunk(
+                            playerChunkX + dx,
+                            playerChunkZ + dz
+                        );
 
                     if (chunk == null) continue;
 
@@ -234,7 +239,6 @@ public class StorageESP extends Module {
                         found.add(pos.toImmutable());
                     }
                 } catch (Exception ignored) {
-                    // Chunk may unload/change while being scanned.
                 }
             }
         }
