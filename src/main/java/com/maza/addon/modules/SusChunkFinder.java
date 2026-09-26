@@ -1,15 +1,9 @@
 package com.maza.addon.modules;
 
-import com.maza.addon.MazaCategory;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.ColorSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -20,6 +14,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.WorldChunk;
 
@@ -28,62 +23,83 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.PriorityQueue;
+import java.util.Queue;
 import java.util.Set;
 
 public class SusChunkFinder extends Module {
-
-    /* ============================================================
-       SETTINGS
-       ============================================================ */
-
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgScan = settings.createGroup("Scan");
     private final SettingGroup sgDetection = settings.createGroup("Detection");
     private final SettingGroup sgPerformance = settings.createGroup("Performance");
     private final SettingGroup sgRender = settings.createGroup("Render");
-    private final SettingGroup sgDebug = settings.createGroup("Debug");
 
-    private final Setting<Integer> scanRadius = sgGeneral.add(
+    /* =========================
+       GENERAL
+       ========================= */
+
+    private final Setting<Integer> renderRange = sgGeneral.add(
         new IntSetting.Builder()
-            .name("scan-radius")
-            .description("Tarama yarıçapı.")
+            .name("render-range")
+            .description("How many chunks around the player are rendered.")
             .defaultValue(8)
             .min(1)
-            .max(32)
-            .sliderMax(16)
+            .sliderMax(32)
             .build()
     );
 
-    private final Setting<Integer> sensitivity = sgDetection.add(
-        new IntSetting.Builder()
-            .name("sensitivity")
-            .description("SUS tespit hassasiyeti.")
-            .defaultValue(60)
-            .min(0)
-            .max(100)
-            .sliderMax(100)
-            .build()
-    );
-
-    private final Setting<Integer> minimumScore = sgDetection.add(
+    private final Setting<Integer> minimumScore = sgGeneral.add(
         new IntSetting.Builder()
             .name("minimum-score")
-            .description("ESP için gereken minimum SUS skoru.")
-            .defaultValue(45)
+            .description("Minimum score required for a chunk to be marked.")
+            .defaultValue(10)
             .min(1)
-            .max(200)
             .sliderMax(100)
+            .build()
+    );
+
+    private final Setting<Integer> sensitivity = sgGeneral.add(
+        new IntSetting.Builder()
+            .name("sensitivity")
+            .description("Detection sensitivity.")
+            .defaultValue(60)
+            .min(0)
+            .sliderMax(100)
+            .build()
+    );
+
+    private final Setting<Boolean> nearestFirst = sgGeneral.add(
+        new BoolSetting.Builder()
+            .name("nearest-first")
+            .description("Scan chunks closest to the player first.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> directionPriority = sgGeneral.add(
+        new BoolSetting.Builder()
+            .name("direction-priority")
+            .description("Prioritize chunks in the direction you are looking.")
+            .defaultValue(true)
+            .build()
+    );
+
+    /* =========================
+       DETECTION
+       ========================= */
+
+    private final Setting<Boolean> detectAmethyst = sgDetection.add(
+        new BoolSetting.Builder()
+            .name("amethyst")
+            .description("Detects amethyst blocks and clusters.")
+            .defaultValue(true)
             .build()
     );
 
     private final Setting<Boolean> detectBudding = sgDetection.add(
         new BoolSetting.Builder()
             .name("budding-amethyst")
-            .description("Budding Amethyst tespiti.")
+            .description("Gives extra score to budding amethyst.")
             .defaultValue(true)
             .build()
     );
@@ -91,667 +107,822 @@ public class SusChunkFinder extends Module {
     private final Setting<Boolean> detectClusters = sgDetection.add(
         new BoolSetting.Builder()
             .name("amethyst-clusters")
-            .description("Amethyst Cluster tespiti.")
+            .description("Detects amethyst buds and clusters.")
             .defaultValue(true)
             .build()
     );
 
-    private final Setting<Boolean> detectBuds = sgDetection.add(
-        new BoolSetting.Builder()
-            .name("amethyst-buds")
-            .description("Amethyst bud tespiti.")
-            .defaultValue(true)
-            .build()
-    );
-
-    private final Setting<Boolean> detectVines = sgDetection.add(
+    private final Setting<Boolean> detectCaveVines = sgDetection.add(
         new BoolSetting.Builder()
             .name("cave-vines")
-            .description("Cave Vines tespiti.")
+            .description("Detects cave vines.")
             .defaultValue(true)
             .build()
     );
 
-    private final Setting<Boolean> clusterAnalysis = sgDetection.add(
+    private final Setting<Boolean> detectDenseAreas = sgDetection.add(
         new BoolSetting.Builder()
-            .name("cluster-analysis")
-            .description("Yakın hedef blokları cluster olarak analiz eder.")
+            .name("dense-areas")
+            .description("Gives extra score to areas containing many targets.")
             .defaultValue(true)
             .build()
     );
 
-    private final Setting<Integer> rescanDelay = sgScan.add(
+    private final Setting<Integer> scanMinY = sgDetection.add(
         new IntSetting.Builder()
-            .name("rescan-delay")
-            .description("Aynı chunk'ın tekrar taranması için bekleme.")
-            .defaultValue(100)
-            .min(10)
-            .max(2000)
-            .sliderMax(500)
+            .name("scan-min-y")
+            .description("Minimum Y level to scan.")
+            .defaultValue(-64)
+            .min(-64)
+            .max(320)
+            .sliderMin(-64)
+            .sliderMax(320)
             .build()
     );
 
-    private final Setting<Boolean> directionPriority = sgScan.add(
-        new BoolSetting.Builder()
-            .name("direction-priority")
-            .description("Oyuncunun baktığı yöndeki chunk'lara öncelik verir.")
-            .defaultValue(true)
+    private final Setting<Integer> scanMaxY = sgDetection.add(
+        new IntSetting.Builder()
+            .name("scan-max-y")
+            .description("Maximum Y level to scan.")
+            .defaultValue(64)
+            .min(-64)
+            .max(320)
+            .sliderMin(-64)
+            .sliderMax(320)
             .build()
     );
+
+    /* =========================
+       PERFORMANCE
+       ========================= */
 
     private final Setting<Integer> blocksPerTick = sgPerformance.add(
         new IntSetting.Builder()
             .name("blocks-per-tick")
-            .description("Tick başına temel tarama bütçesi.")
-            .defaultValue(1500)
+            .description("Maximum number of blocks processed each tick.")
+            .defaultValue(1800)
             .min(100)
-            .max(10000)
-            .sliderMax(5000)
+            .sliderMax(10000)
             .build()
     );
 
-    private final Setting<Boolean> adaptivePerformance = sgPerformance.add(
-        new BoolSetting.Builder()
-            .name("adaptive-performance")
-            .description("FPS'e göre tarama hızını ayarlar.")
-            .defaultValue(true)
-            .build()
-    );
-
-    private final Setting<Integer> minimumFps = sgPerformance.add(
+    private final Setting<Integer> maxScanMillis = sgPerformance.add(
         new IntSetting.Builder()
-            .name("minimum-fps")
-            .description("Tarama sırasında hedeflenen minimum FPS.")
-            .defaultValue(45)
-            .min(15)
-            .max(240)
-            .sliderMax(120)
-            .build()
-    );
-
-    private final Setting<Double> renderHeight = sgRender.add(
-        new DoubleSetting.Builder()
-            .name("render-height")
-            .description("Yatay chunk ESP'sinin kalınlığı.")
-            .defaultValue(0.08)
-            .min(0.01)
-            .max(2.0)
-            .sliderMax(1.0)
-            .decimalPlaces(2)
-            .build()
-    );
-
-    private final Setting<Integer> renderRange = sgRender.add(
-        new IntSetting.Builder()
-            .name("render-range")
-            .description("ESP render mesafesi.")
-            .defaultValue(12)
+            .name("max-scan-time-ms")
+            .description("Maximum scan time per tick.")
+            .defaultValue(4)
             .min(1)
-            .max(32)
-            .sliderMax(16)
+            .sliderMax(15)
+            .build()
+    );
+
+    private final Setting<Integer> rescanDelay = sgPerformance.add(
+        new IntSetting.Builder()
+            .name("rescan-delay")
+            .description("Ticks before an already scanned chunk can be scanned again.")
+            .defaultValue(200)
+            .min(20)
+            .sliderMax(2000)
+            .build()
+    );
+
+    private final Setting<Integer> cacheSize = sgPerformance.add(
+        new IntSetting.Builder()
+            .name("cache-size")
+            .description("Maximum number of chunk results kept in memory.")
+            .defaultValue(512)
+            .min(32)
+            .sliderMax(2048)
+            .build()
+    );
+
+    /* =========================
+       RENDER
+       ========================= */
+
+    private final Setting<ShapeMode> shapeMode = sgRender.add(
+        new EnumSetting.Builder<ShapeMode>()
+            .name("shape-mode")
+            .description("How suspicious chunks are rendered.")
+            .defaultValue(ShapeMode.Both)
+            .build()
+    );
+
+    private final Setting<Integer> renderHeight = sgRender.add(
+        new IntSetting.Builder()
+            .name("render-height")
+            .description("Vertical height of the horizontal chunk marker.")
+            .defaultValue(1)
+            .min(1)
+            .sliderMax(8)
             .build()
     );
 
     private final Setting<Boolean> renderAtPlayerY = sgRender.add(
         new BoolSetting.Builder()
             .name("render-at-player-y")
-            .description("Yatay ESP'yi oyuncunun bulunduğu Y seviyesinde gösterir.")
+            .description("Render the chunk marker at your current Y level.")
             .defaultValue(true)
             .build()
     );
 
-    private final Setting<Integer> fixedRenderY = sgRender.add(
+    private final Setting<Integer> fixedY = sgRender.add(
         new IntSetting.Builder()
-            .name("fixed-render-y")
-            .description("Oyuncu Y seviyesi kullanılmıyorsa ESP'nin Y seviyesi.")
+            .name("fixed-y")
+            .description("Y level used when render-at-player-y is disabled.")
             .defaultValue(0)
             .min(-64)
             .max(320)
-            .sliderMax(100)
-            .visible(() -> !renderAtPlayerY.get())
-            .build()
-    );
-
-    private final Setting<ShapeMode> shapeMode = sgRender.add(
-        new EnumSetting.Builder<ShapeMode>()
-            .name("shape-mode")
-            .description("Chunk ESP şekli.")
-            .defaultValue(ShapeMode.Both)
+            .sliderMin(-64)
+            .sliderMax(320)
             .build()
     );
 
     private final Setting<SettingColor> sideColor = sgRender.add(
         new ColorSetting.Builder()
             .name("side-color")
-            .description("ESP dolgu rengi ve saydamlığı.")
-            .defaultValue(new SettingColor(255, 30, 30, 35))
+            .description("Color of the chunk marker.")
+            .defaultValue(new SettingColor(255, 0, 0, 45))
             .build()
     );
 
     private final Setting<SettingColor> lineColor = sgRender.add(
         new ColorSetting.Builder()
             .name("line-color")
-            .description("ESP çizgi rengi.")
-            .defaultValue(new SettingColor(255, 30, 30, 230))
+            .description("Color of the chunk outline.")
+            .defaultValue(new SettingColor(255, 0, 0, 255))
             .build()
     );
 
-    private final Setting<Boolean> debug = sgDebug.add(
-        new BoolSetting.Builder()
-            .name("debug")
-            .description("Debug bilgilerini gösterir.")
-            .defaultValue(false)
-            .build()
-    );
+    private final MinecraftClient mc = MinecraftClient.getInstance();
 
-    /* ============================================================
-       TARGET BLOCKS
-       ============================================================ */
+    private final Map<Long, ScanData> results = new HashMap<>();
+    private final Map<Long, Long> scanTimes = new HashMap<>();
 
-    private static final Set<Block> BUDDING_BLOCKS = Set.of(
-        Blocks.BUDDING_AMETHYST
-    );
+    private final Queue<ChunkTask> queue = new ArrayDeque<>();
+    private final Set<Long> queued = new HashSet<>();
 
-    private static final Set<Block> CLUSTER_BLOCKS = Set.of(
-        Blocks.AMETHYST_CLUSTER
-    );
+    private ChunkTask currentTask;
+    private int currentIndex;
 
-    private static final Set<Block> BUD_BLOCKS = Set.of(
-        Blocks.SMALL_AMETHYST_BUD,
-        Blocks.MEDIUM_AMETHYST_BUD,
-        Blocks.LARGE_AMETHYST_BUD
-    );
-
-    private static final Set<Block> VINE_BLOCKS = Set.of(
-        Blocks.CAVE_VINES,
-        Blocks.CAVE_VINES_PLANT
-    );
-
-    /* ============================================================
-       QUEUES / CACHE
-       ============================================================ */
-
-    private final PriorityQueue<ChunkTask> queue =
-        new PriorityQueue<>(Comparator.comparingDouble(ChunkTask::priority));
-
-    private final Set<Long> queuedChunks = new HashSet<>();
-
-    private final Map<Long, ChunkResult> results = new HashMap<>();
-
-    private final Map<Long, Long> lastScanned = new HashMap<>();
-
-    private ScanTask currentTask;
-
-    /* ============================================================
-       STATISTICS
-       ============================================================ */
-
-    private long tickCounter;
-    private long scannedChunks;
-    private long scannedBlocks;
-    private long foundTargets;
-    private long suspiciousChunks;
-
-    private int currentFps = 60;
-
-    /* ============================================================
-       CONSTRUCTOR
-       ============================================================ */
+    private long lastQueueUpdate;
 
     public SusChunkFinder() {
         super(
-            MazaCategory.INSTANCE,
+            Categories.Misc,
             "sus-chunk-finder",
-            "Şüpheli chunk'ları detaylı şekilde analiz eder."
+            "Detects suspicious chunks using amethyst and cave-vine patterns."
         );
     }
 
-    /* ============================================================
-       ACTIVATE
-       ============================================================ */
-
-    @Override
-    public void onActivate() {
-        clearAll();
-
-        if (mc == null || mc.player == null || mc.world == null) {
-            return;
-        }
-
-        rebuildQueue();
-
-        if (debug.get()) {
-            info("SusChunkFinder aktif.");
-        }
-    }
-
-    /* ============================================================
-       DEACTIVATE
-       ============================================================ */
-
-    @Override
-    public void onDeactivate() {
-        clearAll();
-    }
-
-    /* ============================================================
+    /* =========================================================
        TICK
-       ============================================================ */
+       ========================================================= */
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc == null || mc.player == null || mc.world == null) {
+        if (mc.world == null || mc.player == null) {
+            clearRuntime();
             return;
         }
 
-        tickCounter++;
+        updateQueue();
 
-        updateFps();
+        long start = System.nanoTime();
+        long timeLimit = maxScanMillis.get() * 1_000_000L;
+        int processed = 0;
 
-        if (tickCounter % 5 == 0) {
-            refreshQueue();
-        }
-
-        if (currentTask != null) {
-            processTask();
-
-            if (currentTask != null) {
-                return;
+        while (processed < blocksPerTick.get()) {
+            if (System.nanoTime() - start >= timeLimit) {
+                break;
             }
+
+            if (!processNextBlock()) {
+                break;
+            }
+
+            processed++;
         }
 
-        startNextTask();
+        trimCache();
     }
 
-    /* ============================================================
+    /* =========================================================
        QUEUE
-       ============================================================ */
+       ========================================================= */
 
-    private void rebuildQueue() {
-        queue.clear();
-        queuedChunks.clear();
+    private void updateQueue() {
+        long now = System.currentTimeMillis();
 
-        int centerX = mc.player.getBlockX() >> 4;
-        int centerZ = mc.player.getBlockZ() >> 4;
+        if (now - lastQueueUpdate < 250) {
+            return;
+        }
 
-        int radius = scanRadius.get();
+        lastQueueUpdate = now;
 
-        for (int x = -radius; x <= radius; x++) {
-            for (int z = -radius; z <= radius; z++) {
+        int playerChunkX = mc.player.getChunkPos().x;
+        int playerChunkZ = mc.player.getChunkPos().z;
 
-                int chunkX = centerX + x;
-                int chunkZ = centerZ + z;
+        int range = renderRange.get() + 2;
 
-                if (!isChunkLoaded(chunkX, chunkZ)) {
+        List<ChunkTask> candidates = new ArrayList<>();
+
+        for (int dx = -range; dx <= range; dx++) {
+            for (int dz = -range; dz <= range; dz++) {
+                int x = playerChunkX + dx;
+                int z = playerChunkZ + dz;
+
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > range) {
                     continue;
                 }
 
-                queueChunk(
-                    chunkX,
-                    chunkZ,
-                    calculatePriority(chunkX, chunkZ, centerX, centerZ)
+                long key = ChunkPos.toLong(x, z);
+
+                if (queued.contains(key)) {
+                    continue;
+                }
+
+                if (currentTask != null && currentTask.key == key) {
+                    continue;
+                }
+
+                Long lastScan = scanTimes.get(key);
+
+                if (lastScan != null &&
+                    now - lastScan < rescanDelay.get() * 50L) {
+                    continue;
+                }
+
+                WorldChunk chunk = mc.world.getChunkManager().getWorldChunk(x, z);
+
+                if (chunk == null) {
+                    continue;
+                }
+
+                double distance = Math.sqrt(
+                    dx * dx +
+                    dz * dz
                 );
+
+                double score = distance;
+
+                if (directionPriority.get()) {
+                    score += directionPenalty(dx, dz);
+                }
+
+                candidates.add(
+                    new ChunkTask(
+                        key,
+                        x,
+                        z,
+                        score
+                    )
+                );
+            }
+        }
+
+        if (nearestFirst.get()) {
+            candidates.sort(
+                Comparator.comparingDouble(task -> task.priority)
+            );
+        }
+
+        int maxAdd = 24;
+
+        for (ChunkTask task : candidates) {
+            if (maxAdd-- <= 0) {
+                break;
+            }
+
+            if (queued.add(task.key)) {
+                queue.add(task);
             }
         }
     }
 
-    private void refreshQueue() {
-        if (mc == null || mc.player == null) {
-            return;
-        }
-
-        int centerX = mc.player.getBlockX() >> 4;
-        int centerZ = mc.player.getBlockZ() >> 4;
-
-        int radius = scanRadius.get();
-
-        for (int x = -radius; x <= radius; x++) {
-            for (int z = -radius; z <= radius; z++) {
-
-                int chunkX = centerX + x;
-                int chunkZ = centerZ + z;
-
-                long key = ChunkPos.toLong(chunkX, chunkZ);
-
-                if (queuedChunks.contains(key)) {
-                    continue;
-                }
-
-                Long previous = lastScanned.get(key);
-
-                if (previous != null &&
-                    tickCounter - previous < rescanDelay.get()) {
-                    continue;
-                }
-
-                if (!isChunkLoaded(chunkX, chunkZ)) {
-                    continue;
-                }
-
-                queueChunk(
-                    chunkX,
-                    chunkZ,
-                    calculatePriority(chunkX, chunkZ, centerX, centerZ)
-                );
-            }
-        }
-
-        cleanupCache();
-    }
-
-    private void queueChunk(int chunkX, int chunkZ, double priority) {
-        long key = ChunkPos.toLong(chunkX, chunkZ);
-
-        if (queuedChunks.contains(key)) {
-            return;
-        }
-
-        queuedChunks.add(key);
-
-        queue.offer(
-            new ChunkTask(chunkX, chunkZ, priority)
-        );
-    }
-
-    /* ============================================================
-       PRIORITY
-       ============================================================ */
-
-    private double calculatePriority(
-        int chunkX,
-        int chunkZ,
-        int centerX,
-        int centerZ
-    ) {
-        double dx = chunkX - centerX;
-        double dz = chunkZ - centerZ;
-
-        double distance = Math.sqrt(
-            dx * dx + dz * dz
-        );
-
-        double priority = distance;
-
-        if (!directionPriority.get()) {
-            return priority;
-        }
-
-        if (mc == null || mc.player == null) {
-            return priority;
+    private double directionPenalty(int dx, int dz) {
+        if (dx == 0 && dz == 0) {
+            return 0;
         }
 
         Vec3d look = mc.player.getRotationVec(1.0f);
 
-        double horizontalLength =
-            Math.sqrt(look.x * look.x + look.z * look.z);
+        double len = Math.sqrt(
+            dx * dx +
+            dz * dz
+        );
 
-        if (horizontalLength <= 0.001) {
-            return priority;
-        }
-
-        double lookX = look.x / horizontalLength;
-        double lookZ = look.z / horizontalLength;
-
-        double chunkLength =
-            Math.sqrt(dx * dx + dz * dz);
-
-        if (chunkLength <= 0.001) {
-            return priority;
-        }
-
-        double directionX = dx / chunkLength;
-        double directionZ = dz / chunkLength;
+        double nx = dx / len;
+        double nz = dz / len;
 
         double dot =
-            lookX * directionX +
-            lookZ * directionZ;
+            look.x * nx +
+            look.z * nz;
 
-        priority -= dot * 2.5;
-
-        return priority;
+        return (1.0 - dot) * 3.0;
     }
 
-    /* ============================================================
-       TASK START
-       ============================================================ */
+    /* =========================================================
+       SCANNING
+       ========================================================= */
 
-    private void startNextTask() {
-        while (!queue.isEmpty()) {
-
-            ChunkTask task = queue.poll();
-
-            if (task == null) {
-                return;
-            }
-
-            queuedChunks.remove(task.key());
-
-            if (!isChunkLoaded(task.chunkX, task.chunkZ)) {
-                continue;
-            }
-
-            Long previous = lastScanned.get(task.key());
-
-            if (previous != null &&
-                tickCounter - previous < rescanDelay.get()) {
-                continue;
-            }
-
-            WorldChunk chunk =
-                getChunk(task.chunkX, task.chunkZ);
-
-            if (chunk == null) {
-                continue;
-            }
-
-            currentTask =
-                new ScanTask(chunk);
-
-            return;
+    private boolean processNextBlock() {
+        if (mc.world == null) {
+            return false;
         }
-    }
 
-    /* ============================================================
-       TASK PROCESSING
-       ============================================================ */
-
-    private void processTask() {
         if (currentTask == null) {
-            return;
-        }
+            currentTask = queue.poll();
 
-        int budget = getScanBudget();
-
-        for (int i = 0; i < budget; i++) {
-
-            if (currentTask.finished()) {
-                finishTask();
-                return;
+            if (currentTask == null) {
+                return false;
             }
 
-            currentTask.scanNext();
+            queued.remove(currentTask.key);
 
-            scannedBlocks++;
+            currentIndex = 0;
 
-            if (currentTask.finished()) {
-                finishTask();
-                return;
-            }
-        }
-    }
-
-    /* ============================================================
-       TASK FINISH
-       ============================================================ */
-
-    private void finishTask() {
-        if (currentTask == null) {
-            return;
+            currentTask.data = new ScanData(
+                currentTask.chunkX,
+                currentTask.chunkZ
+            );
         }
 
-        ChunkResult result =
-            currentTask.createResult();
-
-        long key = result.key;
-
-        results.put(key, result);
-
-        lastScanned.put(
-            key,
-            tickCounter
+        WorldChunk chunk = mc.world.getChunkManager().getWorldChunk(
+            currentTask.chunkX,
+            currentTask.chunkZ
         );
 
-        scannedChunks++;
-
-        foundTargets += result.targetCount;
-
-        if (result.score >= effectiveMinimumScore()) {
-            suspiciousChunks++;
+        if (chunk == null) {
+            finishCurrentTask();
+            return true;
         }
+
+        int minY = Math.max(
+            chunk.getBottomY(),
+            scanMinY.get()
+        );
+
+        int maxY = Math.min(
+            chunk.getBottomY() + chunk.getHeight() - 1,
+            scanMaxY.get()
+        );
+
+        if (maxY < minY) {
+            finishCurrentTask();
+            return true;
+        }
+
+        int totalY = maxY - minY + 1;
+        int totalBlocks = 16 * 16 * totalY;
+
+        if (currentIndex >= totalBlocks) {
+            finishCurrentTask();
+            return true;
+        }
+
+        int localX = currentIndex & 15;
+        int localZ = (currentIndex >> 4) & 15;
+        int yIndex = currentIndex >> 8;
+
+        int worldX =
+            currentTask.chunkX * 16 +
+            localX;
+
+        int worldZ =
+            currentTask.chunkZ * 16 +
+            localZ;
+
+        int worldY =
+            minY +
+            yIndex;
+
+        BlockPos pos = new BlockPos(
+            worldX,
+            worldY,
+            worldZ
+        );
+
+        BlockState state = chunk.getBlockState(pos);
+
+        checkBlock(
+            currentTask.data,
+            pos,
+            state
+        );
+
+        currentIndex++;
+
+        return true;
+    }
+
+    private void checkBlock(
+        ScanData data,
+        BlockPos pos,
+        BlockState state
+    ) {
+        Block block = state.getBlock();
+
+        if (detectAmethyst.get() &&
+            isAmethyst(block)) {
+
+            data.amethystCount++;
+
+            data.targets.add(
+                pos.toImmutable()
+            );
+
+            if (isBudding(block)) {
+                data.buddingCount++;
+            }
+
+            if (isCluster(block)) {
+                data.clusterCount++;
+            }
+        }
+
+        if (detectCaveVines.get() &&
+            isCaveVine(block)) {
+
+            data.caveVineCount++;
+
+            data.targets.add(
+                pos.toImmutable()
+            );
+        }
+    }
+
+    /* =========================================================
+       TARGET DETECTION
+       ========================================================= */
+
+    private boolean isAmethyst(Block block) {
+        return block == Blocks.AMETHYST_BLOCK ||
+            block == Blocks.BUDDING_AMETHYST ||
+            block == Blocks.AMETHYST_CLUSTER ||
+            block == Blocks.SMALL_AMETHYST_BUD ||
+            block == Blocks.MEDIUM_AMETHYST_BUD ||
+            block == Blocks.LARGE_AMETHYST_BUD;
+    }
+
+    private boolean isBudding(Block block) {
+        return block == Blocks.BUDDING_AMETHYST;
+    }
+
+    private boolean isCluster(Block block) {
+        return block == Blocks.AMETHYST_CLUSTER ||
+            block == Blocks.SMALL_AMETHYST_BUD ||
+            block == Blocks.MEDIUM_AMETHYST_BUD ||
+            block == Blocks.LARGE_AMETHYST_BUD;
+    }
+
+    private boolean isCaveVine(Block block) {
+        return block == Blocks.CAVE_VINES ||
+            block == Blocks.CAVE_VINES_PLANT;
+    }
+
+    /* =========================================================
+       FINISH SCAN
+       ========================================================= */
+
+    private void finishCurrentTask() {
+        if (currentTask == null ||
+            currentTask.data == null) {
+
+            currentTask = null;
+            currentIndex = 0;
+            return;
+        }
+
+        ScanData data = currentTask.data;
+
+        data.clusterScore = calculateClusterScore(data);
+        data.score = calculateScore(data);
+
+        long key = currentTask.key;
+
+        results.put(
+            key,
+            data
+        );
+
+        scanTimes.put(
+            key,
+            System.currentTimeMillis()
+        );
 
         currentTask = null;
+        currentIndex = 0;
     }
 
-    /* ============================================================
-       PERFORMANCE
-       ============================================================ */
-
-    private int getScanBudget() {
-        int base = blocksPerTick.get();
-
-        if (!adaptivePerformance.get()) {
-            return base;
-        }
-
-        int minimum = minimumFps.get();
-
-        if (currentFps < minimum) {
-            return Math.max(100, base / 4);
-        }
-
-        if (currentFps < minimum + 10) {
-            return Math.max(150, base / 2);
-        }
-
-        if (currentFps > minimum + 50) {
-            return Math.min(10000, base * 2);
-        }
-
-        return base;
-    }
-
-    private void updateFps() {
-        try {
-            currentFps =
-                MinecraftClient.getInstance().getCurrentFps();
-        }
-        catch (Throwable ignored) {
-            currentFps = 60;
-        }
-
-        if (currentFps <= 0) {
-            currentFps = 60;
-        }
-    }
-
-    /* ============================================================
+    /* =========================================================
        SCORE
-       ============================================================ */
-
-    private int effectiveMinimumScore() {
-        int base = minimumScore.get();
-
-        int reduction =
-            (int) ((100.0 - sensitivity.get()) * 0.25);
-
-        return Math.max(
-            1,
-            base - reduction
-        );
-    }
+       ========================================================= */
 
     private int calculateScore(ScanData data) {
-    int score = 0;
+        int score = 0;
 
-    /*
-     * Genel hedef yoğunluğu.
-     */
-    score += Math.min(
-        data.targetCount * 2,
-        40
-    );
+        /*
+         * Budding amethyst
+         */
+        if (data.buddingCount > 0) {
+            score += Math.min(
+                data.buddingCount * 8,
+                40
+            );
+        }
 
-    /*
-     * Budding Amethyst güçlü sinyal.
-     */
-    score += Math.min(
-        data.buddingCount * 10,
-        50
-    );
+        /*
+         * Normal amethyst
+         */
+        if (data.amethystCount > 0) {
+            score += Math.min(
+                data.amethystCount * 2,
+                30
+            );
+        }
 
-    /*
-     * Amethyst Cluster.
-     */
-    score += Math.min(
-        data.clusterCount * 4,
-        30
-    );
+        /*
+         * Amethyst clusters / buds
+         */
+        if (data.clusterCount > 0) {
+            score += Math.min(
+                data.clusterCount * 2,
+                25
+            );
+        }
 
-    /*
-     * Küçük / orta / büyük budlar.
-     */
-    score += Math.min(
-        data.budCount * 2,
-        20
-    );
+        /*
+         * Cave vines
+         */
+        if (data.caveVineCount > 0) {
+            score += Math.min(
+                data.caveVineCount,
+                15
+            );
+        }
 
-    /*
-     * Cave Vines.
-     */
-    score += Math.min(
-        data.vineCount * 2,
-        25
-    );
+        /*
+         * Dense target areas
+         */
+        if (detectDenseAreas.get()) {
+            score += data.clusterScore;
+        }
 
-    /*
-     * Farklı hedef türlerinin bulunması.
-     */
-    score += data.distinctTypes * 5;
+        /*
+         * Sensitivity multiplier.
+         *
+         * 0 sensitivity = 0.60x
+         * 100 sensitivity = 1.20x
+         */
+        double multiplier =
+            0.60 +
+            (sensitivity.get() / 100.0) * 0.60;
 
-    /*
-     * Cluster analizi.
-     */
-    if (data.largestCluster >= 2) {
-        score += Math.min(
-            data.largestCluster * 3,
-            30
+        score =
+            (int) (score * multiplier);
+
+        return score;
+    }
+
+    private int calculateClusterScore(ScanData data) {
+        if (data.targets.isEmpty()) {
+            return 0;
+        }
+
+        int nearbyPairs = 0;
+
+        Set<Long> positions = new HashSet<>();
+
+        for (BlockPos pos : data.targets) {
+            positions.add(
+                BlockPos.asLong(
+                    pos.getX(),
+                    pos.getY(),
+                    pos.getZ()
+                )
+            );
+        }
+
+        for (BlockPos pos : data.targets) {
+            int x = pos.getX();
+            int y = pos.getY();
+            int z = pos.getZ();
+
+            for (Direction direction : Direction.values()) {
+                int nx = x + direction.getOffsetX();
+                int ny = y + direction.getOffsetY();
+                int nz = z + direction.getOffsetZ();
+
+                long key =
+                    BlockPos.asLong(
+                        nx,
+                        ny,
+                        nz
+                    );
+
+                if (positions.contains(key)) {
+                    nearbyPairs++;
+                }
+            }
+        }
+
+        /*
+         * Every pair is counted twice,
+         * therefore divide by two.
+         */
+        nearbyPairs /= 2;
+
+        return Math.min(
+            nearbyPairs * 2,
+            25
         );
     }
 
-    /*
-     * Yoğunluk bonusları.
-     */
-    if (data.density > 0.0025) {
-        score += 10;
+     /* =========================================================
+       RENDER
+       ========================================================= */
+
+    @Override
+    public void render3D(
+        meteordevelopment.meteorclient.events.render.Render3DEvent event
+    ) {
+        if (mc.world == null ||
+            mc.player == null) {
+
+            return;
+        }
+
+        int playerChunkX =
+            mc.player.getChunkPos().x;
+
+        int playerChunkZ =
+            mc.player.getChunkPos().z;
+
+        int range = renderRange.get();
+
+        int renderY;
+
+        if (renderAtPlayerY.get()) {
+            renderY = mc.player.getBlockY();
+        } else {
+            renderY = fixedY.get();
+        }
+
+        for (ScanData data : results.values()) {
+            if (data.score < minimumScore.get()) {
+                continue;
+            }
+
+            int dx =
+                data.chunkX -
+                playerChunkX;
+
+            int dz =
+                data.chunkZ -
+                playerChunkZ;
+
+            if (Math.max(
+                Math.abs(dx),
+                Math.abs(dz)
+            ) > range) {
+
+                continue;
+            }
+
+            int minX =
+                data.chunkX * 16;
+
+            int minZ =
+                data.chunkZ * 16;
+
+            int maxX =
+                minX + 16;
+
+            int maxZ =
+                minZ + 16;
+
+            event.renderer.box(
+                minX,
+                renderY,
+                minZ,
+                maxX,
+                renderY + renderHeight.get(),
+                maxZ,
+                sideColor.get(),
+                lineColor.get(),
+                shapeMode.get()
+            );
+        }
     }
 
-    if (data.density > 0.005) {
-        score += 10;
+    /* =========================================================
+       CACHE
+       ========================================================= */
+
+    private void trimCache() {
+        int max = cacheSize.get();
+
+        if (results.size() <= max) {
+            return;
+        }
+
+        while (results.size() > max) {
+            Long oldestKey = null;
+            long oldestTime = Long.MAX_VALUE;
+
+            for (Map.Entry<Long, Long> entry : scanTimes.entrySet()) {
+                if (entry.getValue() < oldestTime) {
+                    oldestTime = entry.getValue();
+                    oldestKey = entry.getKey();
+                }
+            }
+
+            if (oldestKey == null) {
+                break;
+            }
+
+            results.remove(oldestKey);
+            scanTimes.remove(oldestKey);
+        }
     }
 
-    if (data.density > 0.01) {
-        score += 15;
+    private void clearRuntime() {
+        queue.clear();
+        queued.clear();
+        results.clear();
+        scanTimes.clear();
+
+        currentTask = null;
+        currentIndex = 0;
     }
 
-    /*
-     * Sensitivity.
-     */
-    double multiplier =
-        0.60 +
-        (sensitivity.get() / 100.0) * 0.60;
+    /* =========================================================
+       MODULE LIFECYCLE
+       ========================================================= */
 
-    score =
-        (int) (score * multiplier);
-
-    return score;
+    @Override
+    public void onActivate() {
+        clearRuntime();
+        lastQueueUpdate = 0;
     }
+
+    @Override
+    public void onDeactivate() {
+        clearRuntime();
+    }
+
+    /* =========================================================
+       TASK
+       ========================================================= */
+
+    private static class ChunkTask {
+        final long key;
+        final int chunkX;
+        final int chunkZ;
+        final double priority;
+
+        ScanData data;
+
+        ChunkTask(
+            long key,
+            int chunkX,
+            int chunkZ,
+            double priority
+        ) {
+            this.key = key;
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+            this.priority = priority;
+        }
+    }
+
+    /* =========================================================
+       SCAN DATA
+       ========================================================= */
+
+    private static class ScanData {
+        final int chunkX;
+        final int chunkZ;
+
+        int score;
+
+        int amethystCount;
+        int buddingCount;
+        int clusterCount;
+        int caveVineCount;
+
+        int clusterScore;
+
+        final List<BlockPos> targets =
+            new ArrayList<>();
+
+        ScanData(
+            int chunkX,
+            int chunkZ
+        ) {
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+        }
+    }
+}
