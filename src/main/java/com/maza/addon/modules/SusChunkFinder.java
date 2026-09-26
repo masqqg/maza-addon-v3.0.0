@@ -671,73 +671,87 @@ public class SusChunkFinder extends Module {
     }
 
     private int calculateScore(ScanData data) {
-        int score = 0;
+    int score = 0;
 
-        /*
-         * Genel hedef yoğunluğu.
-         */
-        score += Math.min(
-            data.targetCount * 2,
-            40
-        );
+    /*
+     * Genel hedef yoğunluğu.
+     */
+    score += Math.min(
+        data.targetCount * 2,
+        40
+    );
 
-        /*
-         * Budding Amethyst güçlü sinyal.
-         */
-        score += Math.min(
-            data.buddingCount * 10,
-            50
-        );
+    /*
+     * Budding Amethyst güçlü sinyal.
+     */
+    score += Math.min(
+        data.buddingCount * 10,
+        50
+    );
 
-        /*
-         * Cluster.
-         */
+    /*
+     * Amethyst Cluster.
+     */
+    score += Math.min(
+        data.clusterCount * 4,
+        30
+    );
+
+    /*
+     * Küçük / orta / büyük budlar.
+     */
+    score += Math.min(
+        data.budCount * 2,
+        20
+    );
+
+    /*
+     * Cave Vines.
+     */
+    score += Math.min(
+        data.vineCount * 2,
+        25
+    );
+
+    /*
+     * Farklı hedef türlerinin bulunması.
+     */
+    score += data.distinctTypes * 5;
+
+    /*
+     * Cluster analizi.
+     */
+    if (data.largestCluster >= 2) {
         score += Math.min(
-            data.clusterCount * 4,
+            data.largestCluster * 3,
             30
         );
+    }
 
-        /*
-         * Bud.
-         */
-        score += Math.min(
-            data.budCount * 2,
-            20
-        );
+    /*
+     * Yoğunluk bonusları.
+     */
+    if (data.density > 0.0025) {
+        score += 10;
+    }
 
-        /*
-         * Cave Vines.
-         */
-        score += Math.min(
-            data.vineCount * 2,
-            25
-        );
+    if (data.density > 0.005) {
+        score += 10;
+    }
 
-        /*
-         * Farklı hedef tipleri.
-         */
-        score +=
-            data.distinctTypes * 5;
+    if (data.density > 0.01) {
+        score += 15;
+    }
 
-        /*
-         * Cluster yoğunluğu.
-         */
-        if (data.largestCluster >= 2) {
-            score += Math.min(
-                data.largestCluster * 3,
-                30
-            );
-        }
+    /*
+     * Sensitivity.
+     */
+    double multiplier =
+        0.60 +
+        (sensitivity.get() / 100.0) * 0.60;
 
-        /*
-         * Yoğunluk bonusları.
-         */
-        if (data.density > 0.0025) {
-            score += 10;
-        }
+    score =
+        (int) (score * multiplier);
 
-        if (data.density > 0.005) {
-            score += 10;
-        }
-
- 
+    return score;
+    }
