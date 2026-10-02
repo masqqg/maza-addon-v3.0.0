@@ -1,5 +1,8 @@
 package com.maza.addon;
 
+import com.maza.addon.modules.AntiVanish;
+import com.maza.addon.modules.NetheriteFinderPlus;
+import com.maza.addon.modules.PrimeChunkFinder;
 import com.maza.addon.modules.StorageESP;
 import com.maza.addon.modules.SusChunkFinder;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -9,7 +12,10 @@ public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
         Modules.get().add(new SusChunkFinder());
+        Modules.get().add(new PrimeChunkFinder());
+        Modules.get().add(new NetheriteFinderPlus());
         Modules.get().add(new StorageESP());
+        Modules.get().add(new AntiVanish());
     }
 
     @Override
