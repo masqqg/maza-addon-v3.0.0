@@ -9,7 +9,6 @@ import com.maza.addon.MazaCategory;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
-import meteordevelopment.meteorclient.utils.render.Renderer2D;
 
 import java.util.*;
 
