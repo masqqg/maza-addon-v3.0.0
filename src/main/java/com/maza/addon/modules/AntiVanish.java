@@ -39,8 +39,8 @@ public class AntiVanish extends Module {
         if (mc.world == null || mc.player == null || mc.getNetworkHandler() == null) return;
         Set<UUID> listed = new HashSet<>();
         for (PlayerListEntry e : mc.getNetworkHandler().getPlayerList()) {
-            listed.add(e.getProfile().getId());
-            if (e.getProfile().getName() != null) known.put(e.getProfile().getId(), e.getProfile().getName());
+            listed.add(e.getProfile().id());
+            if (e.getProfile().name() != null) known.put(e.getProfile().id(), e.getProfile().name());
         }
 
         for (PlayerEntity p : mc.world.getPlayers()) {
