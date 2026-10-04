@@ -15,13 +15,7 @@ public class Addon extends MeteorAddon {
 
     @Override
     public void onInitialize() {
-        LOG.info("Maza Addon 3.0.1 başlatılıyor...");
-
-        // NOT: 14. satırda yüklediğiniz özel modüller (örneğin AutoCraft, RecipeBook vb.) 
-        // net.minecraft.recipe.Recipe veya class_2753 referansı içeriyorsa, 
-        // o modül sınıflarının içindeki eski Recipe türlerini RecipeEntry veya ItemStack ile değiştirin.
-        
-        // Modules.get().add(new ÖrnekModülünüz());
+        LOG.info("Maza Addon basariyla yuklendi!");
     }
 
     @Override
@@ -36,6 +30,6 @@ public class Addon extends MeteorAddon {
 
     @Override
     public GithubFolder getGithubFolder() {
-        return new GithubFolder("github-kullanici-adi", "maza-addon", "main");
+        return new GithubFolder("kullanici-adi", "maza-addon", "main");
     }
 }
