@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.9-SNAPSHOT'
+    id 'net.fabricmc.fabric-loom' version '1.9-SNAPSHOT'
     id 'maven-publish'
 }
 
@@ -10,17 +10,17 @@ repositories {
     mavenCentral()
     maven {
         name = "meteor-maven"
-        url = "https://maven.meteordev.org/releases"
+        url = "https://meteordev.org"
     }
     maven {
         name = "meteor-maven-snapshots"
-        url = "https://maven.meteordev.org/snapshots"
+        url = "https://meteordev.org"
     }
 }
 
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    mappings "net.fabricmc🧶${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     modImplementation "meteordevelopment:meteor-client:${project.meteor_version}"
