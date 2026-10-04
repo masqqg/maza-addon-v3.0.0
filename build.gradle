@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.9.2'
+    id 'fabric-loom' version '1.7-SNAPSHOT'
     id 'maven-publish'
 }
 
@@ -8,8 +8,14 @@ group = project.maven_group
 
 repositories {
     mavenCentral()
-    maven { name = "meteor-maven"; url = "https://maven.meteordev.org/releases" }
-    maven { name = "meteor-maven-snapshots"; url = "https://maven.meteordev.org/snapshots" }
+    maven {
+        name = "meteor-maven"
+        url = "https://maven.meteordev.org/releases"
+    }
+    maven {
+        name = "meteor-maven-snapshots"
+        url = "https://maven.meteordev.org/snapshots"
+    }
 }
 
 dependencies {
@@ -17,7 +23,6 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
     modImplementation "meteordevelopment:meteor-client:${project.meteor_version}"
 }
 
