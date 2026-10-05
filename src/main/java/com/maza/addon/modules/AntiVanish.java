@@ -1,256 +1,186 @@
 package com.maza.addon.modules;
 
 import com.maza.addon.MazaCategory;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingColor;
-import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.settings.StringListSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.math.Box;
+import net.minecraft.world.GameMode;
 
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * AntiVanish
+ *
+ * Looks for players whose visibility does not add up:
+ *  - nearby entity: a player entity is close to you but missing from the tab list,
+ *  - tab removal: a player vanished from the tab list while their entity is still in view,
+ *  - gamemode watch: somebody is listed as spectator.
+ * Servers with NPC plugins can trigger the first one, raise confirm-ticks if that happens.
+ */
 public class AntiVanish extends Module {
     private final SettingGroup general = settings.getDefaultGroup();
     private final SettingGroup detection = settings.createGroup("Detection");
     private final SettingGroup alerts = settings.createGroup("Alerts");
-    private final SettingGroup staff = settings.createGroup("Staff List");
 
-    private final Setting<Boolean> enabled = general.add(new BoolSetting.Builder()
-        .name("enabled")
-        .description("Enable staff vanish detection.")
-        .defaultValue(true)
-        .build());
-
-    private final Setting<Integer> range = detection.add(new IntSetting.Builder()
+    private final Setting<Integer> range = general.add(new IntSetting.Builder()
         .name("range")
-        .defaultValue(128)
-        .min(8)
-        .max(256)
-        .sliderMax(256)
-        .build());
+        .description("Max distance in blocks for the nearby-entity check.")
+        .defaultValue(64).min(8).max(256).sliderMax(256).build());
 
     private final Setting<Integer> confirmTicks = detection.add(new IntSetting.Builder()
         .name("confirm-ticks")
-        .defaultValue(12)
-        .min(1)
-        .max(60)
-        .sliderMax(60)
-        .build());
+        .description("Ticks a player must stay missing from the tab list before an alert.")
+        .defaultValue(12).min(1).max(60).sliderMax(60).build());
 
-    private final Setting<Boolean> tabCheck = detection.add(new BoolSetting.Builder()
-        .name("tab-check")
-        .defaultValue(true)
-        .build());
+    private final Setting<Boolean> nearbyEntity = detection.add(new BoolSetting.Builder()
+        .name("nearby-entity").defaultValue(true).build());
 
-    private final Setting<Boolean> spectatorCheck = detection.add(new BoolSetting.Builder()
-        .name("spectator-check")
-        .defaultValue(true)
-        .build());
+    private final Setting<Boolean> tabRemoval = detection.add(new BoolSetting.Builder()
+        .name("tab-removal").defaultValue(true).build());
 
-    private final Setting<Boolean> chatAlert = alerts.add(new BoolSetting.Builder()
-        .name("chat-alert")
-        .description("Send a large uppercase alert to chat.")
-        .defaultValue(true)
-        .build());
+    private final Setting<Boolean> gamemodeWatch = detection.add(new BoolSetting.Builder()
+        .name("gamemode-watch").defaultValue(true).build());
 
-    private final Setting<Boolean> screenAlert = alerts.add(new BoolSetting.Builder()
-        .name("screen-alert")
-        .defaultValue(true)
-        .build());
+    private final Setting<Boolean> notify = alerts.add(new BoolSetting.Builder()
+        .name("notify").description("Chat message on alert.").defaultValue(true).build());
+
+    private final Setting<Boolean> esp = alerts.add(new BoolSetting.Builder()
+        .name("esp").description("Box around flagged players for 10 seconds.").defaultValue(true).build());
 
     private final Setting<SettingColor> alertColor = alerts.add(new ColorSetting.Builder()
-        .name("alert-color")
-        .defaultValue(new SettingColor(255, 60, 60, 255))
-        .build());
+        .name("color").defaultValue(new SettingColor(255, 60, 60, 255)).build());
 
-    /*
-     * Editable staff list.
-     * Add/remove names directly from the module setting.
-     */
-    private final Setting<java.util.List<String>> staffList = staff.add(
-        new StringListSetting.Builder()
-            .name("staff-list")
-            .description("Names that should be treated as staff.")
-            .defaultValue(
-                "fluffymaster07",
-                "archivepedro",
-                "munkerlich",
-                "frenk_btw",
-                "napooo_",
-                "auzzitech",
-                "cryptodaveyt",
-                "w1zox_",
-                "zeef69",
-                "showered",
-                "captainmoose35",
-                "bobisfound",
-                "noahvdaa",
-                "0gsummer",
-                "lzouzmp5",
-                "pastagamer08",
-                "u_vv",
-                "owen1212055",
-                "splaterd",
-                "fallerfly"
-            )
-            .build()
-    );
-
-    private final Map<UUID, String> knownNames = new HashMap<>();
+    private final Map<UUID, String> known = new HashMap<>();
     private final Map<UUID, Integer> missingTicks = new HashMap<>();
-    private final Map<UUID, Long> lastAlert = new HashMap<>();
-    private final Map<UUID, Boolean> spectatorState = new HashMap<>();
+    private final Map<UUID, Long> alertedAt = new HashMap<>();
+    private final Map<UUID, Long> flagged = new HashMap<>();
+    private Set<UUID> listedLast = new HashSet<>();
 
     public AntiVanish() {
-        super(
-            MazaCategory.INSTANCE,
-            "anti-vanish",
-            "Detects configured staff disappearing from TAB or entering spectator."
-        );
+        super(MazaCategory.INSTANCE, "anti-vanish", "Detects suspicious player visibility and tab-list inconsistencies.");
     }
 
     @Override
     public void onActivate() {
-        clearState();
+        clearAll();
     }
 
     @Override
     public void onDeactivate() {
-        clearState();
+        clearAll();
     }
 
-    private void clearState() {
-        knownNames.clear();
+    private void clearAll() {
+        known.clear();
         missingTicks.clear();
-        lastAlert.clear();
-        spectatorState.clear();
+        alertedAt.clear();
+        flagged.clear();
+        listedLast = new HashSet<>();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!enabled.get()) return;
+        if (mc.world == null || mc.player == null || mc.getNetworkHandler() == null) return;
 
-        if (mc.world == null || mc.player == null || mc.getNetworkHandler() == null) {
-            clearState();
-            return;
-        }
-
-        Map<UUID, PlayerListEntry> tab = new HashMap<>();
+        UUID self = mc.player.getUuid();
+        Set<UUID> listed = new HashSet<>();
 
         for (PlayerListEntry entry : mc.getNetworkHandler().getPlayerList()) {
-            if (entry == null || entry.getProfile() == null) continue;
+            UUID id = entry.getProfile().id();
+            String name = entry.getProfile().name();
 
-            UUID id = entry.getProfile().getId();
-            String name = entry.getProfile().getName();
+            listed.add(id);
+            if (name != null) known.put(id, name);
 
-            if (id == null || name == null || name.isBlank()) continue;
+            if (gamemodeWatch.get() && !id.equals(self) && entry.getGameMode() == GameMode.SPECTATOR) {
+                alert(id, nameOf(id), "listed as spectator");
+            }
+        }
 
-            knownNames.put(id, name);
-            tab.put(id, entry);
-
-            if (spectatorCheck.get() && isStaff(name)) {
-                boolean spectator = entry.getGameMode() != null
-                    && entry.getGameMode().isSpectator();
-
-                Boolean old = spectatorState.put(id, spectator);
-
-                if (spectator && (old == null || !old)) {
-                    alert(name, "SPECTATOR");
+        if (tabRemoval.get()) {
+            for (UUID id : listedLast) {
+                if (id.equals(self) || listed.contains(id)) continue;
+                if (mc.world.getPlayerByUuid(id) != null) {
+                    alert(id, nameOf(id), "removed from tab list while still in view");
                 }
             }
         }
 
-        if (tabCheck.get()) {
-            checkNearbyStaff(tab);
-        }
-    }
-
-    private void checkNearbyStaff(Map<UUID, PlayerListEntry> tab) {
-        double maxDistanceSq = range.get() * (double) range.get();
+        double limit = range.get();
+        double limitSq = limit * limit;
 
         for (PlayerEntity player : mc.world.getPlayers()) {
-            if (player == null || player == mc.player) continue;
+            if (player == mc.player) continue;
 
             UUID id = player.getUuid();
-            String name = player.getName().getString();
+            known.putIfAbsent(id, player.getName().getString());
 
-            if (id == null || name.isBlank()) continue;
-            if (!isStaff(name)) {
+            boolean missing = nearbyEntity.get()
+                && mc.player.squaredDistanceTo(player) <= limitSq
+                && !listed.contains(id);
+
+            if (!missing) {
                 missingTicks.remove(id);
                 continue;
             }
 
-            boolean nearby = mc.player.squaredDistanceTo(player) <= maxDistanceSq;
-            boolean missingFromTab = !tab.containsKey(id);
-
-            if (nearby && missingFromTab) {
-                int ticks = missingTicks.merge(id, 1, Integer::sum);
-
-                if (ticks >= confirmTicks.get()) {
-                    alert(name, "VANISHED FROM TAB");
-                }
-            } else {
-                missingTicks.remove(id);
-            }
-        }
-    }
-
-    private boolean isStaff(String name) {
-        String target = name.toLowerCase(Locale.ROOT).trim();
-
-        for (String staffName : staffList.get()) {
-            if (staffName != null
-                && target.equals(staffName.toLowerCase(Locale.ROOT).trim())) {
-                return true;
+            int ticks = missingTicks.merge(id, 1, Integer::sum);
+            if (ticks >= confirmTicks.get()) {
+                alert(id, player.getName().getString(), "nearby entity absent from tab list");
             }
         }
 
-        return false;
+        listedLast = listed;
     }
 
-    private void alert(String name, String reason) {
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (!esp.get() || mc.world == null || flagged.isEmpty()) return;
+
         long now = System.currentTimeMillis();
+        flagged.values().removeIf(until -> until < now);
 
-        UUID id = mc.player != null ? mc.player.getUuid() : null;
+        SettingColor line = alertColor.get();
+        Color side = new Color(line.r, line.g, line.b, 45);
 
-        /*
-         * Per-name cooldown prevents one staff member from spamming chat.
-         */
-        UUID alertId = UUID.nameUUIDFromBytes(
-            name.toLowerCase(Locale.ROOT).getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        );
+        for (UUID id : flagged.keySet()) {
+            PlayerEntity player = mc.world.getPlayerByUuid(id);
+            if (player == null) continue;
 
-        if (now - lastAlert.getOrDefault(alertId, 0L) < 5000L) return;
-        lastAlert.put(alertId, now);
-
-        String message =
-            "§c§l⚠ STAFF ALERT ⚠ §r§c"
-            + name.toUpperCase(Locale.ROOT)
-            + " §7| §c"
-            + reason;
-
-        if (chatAlert.get() && mc.player != null) {
-            mc.player.sendMessage(
-                net.minecraft.text.Text.literal(message),
-                false
-            );
+            Box b = player.getBoundingBox();
+            event.renderer.box(b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, side, line, ShapeMode.Both, 0);
         }
+    }
 
-        if (screenAlert.get()) {
-            info("§c§lSTAFF ALERT: §f" + name + " §c" + reason);
-        }
+    private String nameOf(UUID id) {
+        String name = known.get(id);
+        return name != null ? name : id.toString();
+    }
+
+    private void alert(UUID id, String name, String reason) {
+        long now = System.currentTimeMillis();
+        Long last = alertedAt.get(id);
+        if (last != null && now - last < 5000L) return;
+
+        alertedAt.put(id, now);
+        flagged.put(id, now + 10_000L);
+
+        if (notify.get()) info("Possible vanished player: %s (%s)", name, reason);
     }
 }
