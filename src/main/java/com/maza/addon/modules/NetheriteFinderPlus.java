@@ -178,13 +178,15 @@ public class NetheriteFinderPlus extends Module {
         .defaultValue(new SettingColor(30, 80, 240, 235)).build());
 
     private record Section(int cx, int sy, int cz) {}
+    private record CachedBlocks(long[] confirmed, long[] potential) {}
     private record Dist(long packed, double distSq) {}
 
     // Only touched on the client thread.
     private final Set<Section> candidates = new LinkedHashSet<>();
     private final Set<Long> debris = new LinkedHashSet<>();
-    private final Map<Section, long[]> cache = new HashMap<>();   // enclosed netherrack per section
-    private long[] visible = new long[0];
+    private final Map<Section, CachedBlocks> cache = new HashMap<>();   // confirmed ve potential per section
+    private long[] confirmed = new long[0];    // 6 kapalı komşulu netherrack (mavi)
+    private long[] potential = new long[0];    // açık komşu yok ama tam kapalı değil (sarı)
     private ClientWorld lastWorld;
     private int lastLayers = -1;
     private int tick;
@@ -210,7 +212,8 @@ public class NetheriteFinderPlus extends Module {
         candidates.clear();
         debris.clear();
         cache.clear();
-        visible = new long[0];
+        confirmed = new long[0];
+        potential = new long[0];
         lastWorld = null;
         lastLayers = -1;
         rebuild = true;
@@ -435,7 +438,7 @@ public class NetheriteFinderPlus extends Module {
         for (Section s : need) {
             if (budget-- <= 0) break;
 
-            long[] blocks = computeEnclosed(s);
+            CachedBlocks blocks = computeEnclosedV2(s);
             if (blocks == null) continue; // own chunk not loaded yet, try again later
 
             while (cache.size() >= MAX_CACHED_SECTIONS) {
@@ -449,14 +452,15 @@ public class NetheriteFinderPlus extends Module {
     }
 
     /**
-     * Enclosed netherrack of one section.
+     * Netherrack block classification by direct 6-neighbour closure.
      *
-     * A cell is solid when it is neither air nor a fluid (lava counts as open space) and
-     * its chunk is loaded. Unknown space is treated as open, so rock next to an unloaded
-     * chunk is never claimed to be closed. Closed on six sides repeated N times is N
-     * erosion passes with the six-neighbour kernel, so the grid carries an N block margin.
+     * Confirmed: all 6 neighbours are solid (potential debris site).
+     * Potential: 2-5 neighbours are solid and no open space (air/lava), might be near debris.
+     * Rejected: any air/lava neighbour (not buried enough).
+     *
+     * Chunks that are unloaded count as open, so closure is not claimed across chunk borders.
      */
-    private long[] computeEnclosed(Section section) {
+    private CachedBlocks computeEnclosedV2(Section section) {
         ClientWorld world = mc.world;
         int n = layers.get();
         int size = 16 + 2 * n;
@@ -496,36 +500,59 @@ public class NetheriteFinderPlus extends Module {
             }
         }
 
-        boolean[] current = solid;
-        for (int step = 1; step <= n; step++) {
-            boolean[] next = new boolean[current.length];
-            for (int y = step; y < size - step; y++) {
-                for (int z = step; z < size - step; z++) {
-                    for (int x = step; x < size - step; x++) {
-                        int i = (y * size + z) * size + x;
-                        next[i] = current[i]
-                            && current[i - 1] && current[i + 1]
-                            && current[i - size] && current[i + size]
-                            && current[i - size * size] && current[i + size * size];
-                    }
-                }
-            }
-            current = next;
-        }
-
-        List<Long> out = new ArrayList<>();
-        for (int y = n; y < n + 16; y++) {
-            for (int z = n; z < n + 16; z++) {
-                for (int x = n; x < n + 16; x++) {
+        // Classification: check each netherrack block's 6 direct neighbours
+        List<Long> confirmed = new ArrayList<>();
+        List<Long> potential = new ArrayList<>();
+        
+        for (int y = 1; y < size - 1; y++) {
+            for (int z = 1; z < size - 1; z++) {
+                for (int x = 1; x < size - 1; x++) {
                     int i = (y * size + z) * size + x;
-                    if (current[i] && rack[i]) out.add(BlockPos.asLong(baseX + x, baseY + y, baseZ + z));
+                    
+                    // Only check netherrack blocks
+                    if (!rack[i]) continue;
+                    
+                    // Count solid neighbours and check for open space
+                    int solidCount = 0;
+                    boolean hasOpen = false;
+                    
+                    // Check 6 directions: west, east, north, south, down, up
+                    boolean[] neighbours = new boolean[]{
+                        solid[i - 1],                  // west
+                        solid[i + 1],                  // east
+                        solid[i - size],               // north
+                        solid[i + size],               // south
+                        solid[i - size * size],        // down
+                        solid[i + size * size]         // up
+                    };
+                    
+                    for (boolean n : neighbours) {
+                        if (n) solidCount++;
+                        else hasOpen = true;
+                    }
+                    
+                    // Skip if has air/lava neighbour (not buried)
+                    if (hasOpen) continue;
+                    
+                    // Classify by solid neighbour count
+                    long blockPos = BlockPos.asLong(baseX + x, baseY + y, baseZ + z);
+                    if (solidCount == 6) {
+                        confirmed.add(blockPos);
+                    } else if (solidCount >= 2) {
+                        potential.add(blockPos);
+                    }
+                    // else: too open, skip
                 }
             }
         }
 
-        long[] result = new long[out.size()];
-        for (int i = 0; i < result.length; i++) result[i] = out.get(i);
-        return result;
+        long[] confirmedArray = new long[confirmed.size()];
+        for (int i = 0; i < confirmed.size(); i++) confirmedArray[i] = confirmed.get(i);
+        
+        long[] potentialArray = new long[potential.size()];
+        for (int i = 0; i < potential.size(); i++) potentialArray[i] = potential.get(i);
+        
+        return new CachedBlocks(confirmedArray, potentialArray);
     }
 
     /** Gather the cached blocks near the player, nearest first, capped at max-blocks. */
@@ -535,11 +562,12 @@ public class NetheriteFinderPlus extends Module {
         double reachSq = reach * reach;
 
         List<Dist> near = new ArrayList<>();
-        for (Map.Entry<Section, long[]> e : cache.entrySet()) {
+        List<Dist> potentialNear = new ArrayList<>();
+        for (Map.Entry<Section, CachedBlocks> e : cache.entrySet()) {
             if (!candidates.contains(e.getKey())) continue;
             if (boxDistSq(e.getKey(), eye) > reachSq) continue;
 
-            for (long packed : e.getValue()) {
+            for (long packed : e.getValue().confirmed) {
                 double dx = BlockPos.unpackLongX(packed) + 0.5 - eye.x;
                 double dy = BlockPos.unpackLongY(packed) + 0.5 - eye.y;
                 double dz = BlockPos.unpackLongZ(packed) + 0.5 - eye.z;
@@ -548,12 +576,28 @@ public class NetheriteFinderPlus extends Module {
             }
         }
 
-        near.sort(Comparator.comparingDouble(Dist::distSq));
-        int limit = Math.min(near.size(), maxBlocks.get());
+            for (long packed : e.getValue().potential) {
+                double dx = BlockPos.unpackLongX(packed) + 0.5 - eye.x;
+                double dy = BlockPos.unpackLongY(packed) + 0.5 - eye.y;
+                double dz = BlockPos.unpackLongZ(packed) + 0.5 - eye.z;
+                double d = dx * dx + dy * dy + dz * dz;
+                if (d <= reachSq) potentialNear.add(new Dist(packed, d));
+            }
+        }
 
-        long[] result = new long[limit];
-        for (int i = 0; i < limit; i++) result[i] = near.get(i).packed();
-        visible = result;
+        near.sort(Comparator.comparingDouble(Dist::distSq));
+        potentialNear.sort(Comparator.comparingDouble(Dist::distSq));
+        
+        int limitC = Math.min(near.size(), maxBlocks.get());
+        long[] resultC = new long[limitC];
+        for (int i = 0; i < limitC; i++) resultC[i] = near.get(i).packed();
+        
+        int limitP = Math.min(potentialNear.size(), maxBlocks.get());
+        long[] resultP = new long[limitP];
+        for (int i = 0; i < limitP; i++) resultP[i] = potentialNear.get(i).packed();
+        
+        confirmed = resultC;
+        potential = resultP;
     }
 
     // ----------------------------------------------------------------- render
@@ -573,12 +617,33 @@ public class NetheriteFinderPlus extends Module {
 
         if (outline.get() && !candidates.isEmpty()) renderOutlines(event);
 
-        // Enclosed netherrack, block by block. Air and lava were dropped while scanning.
-        for (long packed : visible) {
-            double x = BlockPos.unpackLongX(packed);
-            double y = BlockPos.unpackLongY(packed);
-            double z = BlockPos.unpackLongZ(packed);
-            event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e, side, line, mode, 0);
+        // Auto-enable enclosed blocks if netherite is found
+        boolean showEnclosed = enclosed.get() || (!debris.isEmpty() && showDebris.get());
+
+        if (showEnclosed) {
+            // Confirmed: 6 kapalı komşu, mavi çizgi
+            if (!confirmed.isEmpty()) {
+                Color lineOnly = lineColor.get();
+                for (long packed : confirmed) {
+                    double x = BlockPos.unpackLongX(packed);
+                    double y = BlockPos.unpackLongY(packed);
+                    double z = BlockPos.unpackLongZ(packed);
+                    event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e,
+                        new Color(0, 0, 0, 0), lineOnly, ShapeMode.Lines, 0);
+                }
+            }
+            
+            // Potential: air/lava yok ama tam kapalı değil, sarı çizgi
+            if (!potential.isEmpty()) {
+                Color yellow = new Color(255, 255, 0, 200);
+                for (long packed : potential) {
+                    double x = BlockPos.unpackLongX(packed);
+                    double y = BlockPos.unpackLongY(packed);
+                    double z = BlockPos.unpackLongZ(packed);
+                    event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e,
+                        new Color(0, 0, 0, 0), yellow, ShapeMode.Lines, 0);
+                }
+            }
         }
 
         if (showDebris.get() && !debris.isEmpty()) renderDebris(event, side, line, mode, e);
@@ -643,7 +708,12 @@ public class NetheriteFinderPlus extends Module {
             double x = s.cx() * 16.0;
             double y = s.sy() * 16.0;
             double z = s.cz() * 16.0;
-            event.renderer.box(x, y, z, x + 16.0, y + 16.0, z + 16.0, none, line, ShapeMode.Lines, 0);
+            
+            // Thick outline by drawing multiple times with offset
+            for (double off = -0.08; off <= 0.08; off += 0.08) {
+                event.renderer.box(x + off, y + off, z + off, x + 16.0 + off, y + 16.0 + off, z + 16.0 + off,
+                    none, line, ShapeMode.Lines, 0);
+            }
         }
     }
 
@@ -652,6 +722,9 @@ public class NetheriteFinderPlus extends Module {
         double range = debrisRange.get();
         double rangeSq = range * range;
         List<Long> gone = null;
+
+        Color redLine = new Color(255, 0, 0, 220);
+        Color redSide = new Color(255, 0, 0, 60);
 
         for (long packed : debris) {
             int x = BlockPos.unpackLongX(packed);
@@ -670,7 +743,9 @@ public class NetheriteFinderPlus extends Module {
                 continue;
             }
 
-            event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e, side, line, mode, 0);
+            // Red box with tracer
+            event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e, redSide, redLine, mode, 0);
+            event.renderer.line(eye.x, eye.y, eye.z, x + 0.5, y + 0.5, z + 0.5, redLine);
         }
 
         if (gone != null) debris.removeAll(gone);
