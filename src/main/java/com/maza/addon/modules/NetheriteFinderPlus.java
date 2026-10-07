@@ -28,6 +28,7 @@ import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
@@ -62,11 +63,13 @@ import java.util.Set;
  * chunk format (no length prefix on paletted-container data arrays).
  */
 public class NetheriteFinderPlus extends Module {
+    private static final Direction[] DIRS = Direction.values();
     private static final int MAX_CANDIDATES = 4096;
     private static final int MAX_STORED_DEBRIS = 4096;
     private static final double BRACKET = 3.0;
     private static final double PULSE_MS = 1400.0;
     private static final Identifier DONUT_NETHER = Identifier.of("worlds", "smp_nether");
+    private static final Direction[] DIRS = Direction.values();
     private static final int ANCIENT_STATE_ID = Block.getRawIdFromState(Blocks.ANCIENT_DEBRIS.getDefaultState());
 
     private final SettingGroup general = settings.getDefaultGroup();
