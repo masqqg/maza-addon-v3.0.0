@@ -2,12 +2,10 @@ package com.maza.addon.modules;
 
 import com.maza.addon.MazaCategory;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
@@ -15,7 +13,6 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -23,177 +20,216 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.ItemEntity;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.dimension.DimensionTypes;
-import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
  * NetheriteFinder+
  *
- * Passive finder, nothing is ever sent to the server.
+ * Passive finder, nothing is ever sent to the server and nothing is written to chat.
  *
- *  1. Hidden sections: the chunk packet is parsed and every 16x16x16 section whose
- *     block palette lists ancient debris while no block uses that entry is
- *     remembered. These are drawn as a thin outline with corner brackets and a
- *     distance label, never as a filled cube.
- *  2. Real debris blocks: every ancient debris block the client actually knows
- *     about (exposed ones in chunk data, and ones the server reveals through block
- *     updates) is painted block by block in translucent blue. Air is never painted.
+ *  1. Hidden sections. The chunk packet is parsed and every 16x16x16 section whose block
+ *     palette lists ancient debris while no block uses that entry is remembered. The
+ *     cube itself stays see-through (optional thin outline only).
+ *  2. Enclosed netherrack. Each remembered section is scanned from the chunk data the
+ *     client already has. Air and fluids (lava) count as open space and are discarded.
+ *     Only netherrack that has solid blocks on all six sides, repeated for N layers
+ *     (default 2), is drawn, block by block, in one dark blue. That is where hidden
+ *     debris can sit, so it is the only rock worth looking at inside the cube.
+ *  3. Inferred netherite. Netherrack with six netherrack neighbours that are closed on all
+ *     sides (no air or lava around) is drawn in yellow.
+ *  4. Revealed debris. Ancient debris the client actually knows about is drawn in red
+ *     with a tracer.
+ *  5. Item ESP. Ancient debris, scrap and ingots lying on the ground get a box, in any
+ *     dimension, so drops are easy to find after mining.
  *
- * Palette-scan idea follows codexNetheritechunk (MIT). Targets the 1.21.5+
- * chunk format (no length prefix on paletted-container data arrays).
+ * Palette-scan idea follows codexNetheritechunk (MIT). Targets the 1.21.5+ chunk
+ * format (no length prefix on paletted-container data arrays).
  */
 public class NetheriteFinderPlus extends Module {
-    private static final Direction[] DIRS = Direction.values();
     private static final int MAX_CANDIDATES = 4096;
     private static final int MAX_STORED_DEBRIS = 4096;
-    private static final double BRACKET = 3.0;
-    private static final double PULSE_MS = 1400.0;
+    private static final int MAX_CACHED_SECTIONS = 96;
+    private static final int COMPUTE_PER_TICK = 2;
+    private static final int REBUILD_INTERVAL = 4;
     private static final Identifier DONUT_NETHER = Identifier.of("worlds", "smp_nether");
-    private static final Direction[] DIRS = Direction.values();
     private static final int ANCIENT_STATE_ID = Block.getRawIdFromState(Blocks.ANCIENT_DEBRIS.getDefaultState());
 
     private final SettingGroup general = settings.getDefaultGroup();
     private final SettingGroup sectionGroup = settings.createGroup("Hidden Sections");
-    private final SettingGroup debrisGroup = settings.createGroup("Debris Blocks");
+    private final SettingGroup blockGroup = settings.createGroup("Enclosed Blocks");
+    private final SettingGroup itemGroup = settings.createGroup("Item ESP");
 
     // ---- general
-    private final Setting<Integer> renderRange = general.add(new IntSetting.Builder()
-        .name("render-range")
-        .description("Max distance in chunks for hidden sections.")
-        .defaultValue(24).min(1).sliderMax(64).build());
-
-    private final Setting<Integer> maxBoxes = general.add(new IntSetting.Builder()
-        .name("max-boxes")
-        .description("Max number of hidden sections drawn at once (nearest first).")
-        .defaultValue(64).min(1).sliderMax(512).build());
-
-    private final Setting<Boolean> notify = general.add(new BoolSetting.Builder()
-        .name("notify")
-        .description("Chat message when new hidden-debris sections are found.")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> notifyReveals = general.add(new BoolSetting.Builder()
-        .name("notify-reveals")
-        .description("Chat message when the server reveals a real ancient debris block.")
-        .defaultValue(true).build());
-
-    // ---- hidden sections
-    private final Setting<Boolean> sectionOutline = sectionGroup.add(new BoolSetting.Builder()
-        .name("outline")
-        .description("Draw the edges of hidden sections.")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> sectionFill = sectionGroup.add(new BoolSetting.Builder()
-        .name("fill")
-        .description("Also tint the whole 16x16x16 cube. Off by default, the cube stays see-through.")
-        .defaultValue(false).build());
-
-    private final Setting<Boolean> brackets = sectionGroup.add(new BoolSetting.Builder()
-        .name("corner-brackets")
-        .description("Bright L-shaped marks on the 8 corners.")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> pulse = sectionGroup.add(new BoolSetting.Builder()
-        .name("pulse")
-        .description("Slowly pulse the outline.")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> distanceLabels = sectionGroup.add(new BoolSetting.Builder()
-        .name("distance-labels")
-        .description("Show the distance above the nearest sections.")
-        .defaultValue(true).build());
-
-    private final Setting<Integer> labelLimit = sectionGroup.add(new IntSetting.Builder()
-        .name("label-limit")
-        .defaultValue(8).min(1).sliderMax(32).build());
-
-    private final Setting<Boolean> sectionTracers = sectionGroup.add(new BoolSetting.Builder()
-        .name("tracers")
-        .description("Lines to the nearest hidden sections.")
-        .defaultValue(false).build());
-
-    private final Setting<Integer> tracerLimit = sectionGroup.add(new IntSetting.Builder()
-        .name("tracer-limit")
-        .defaultValue(3).min(1).sliderMax(16).build());
-
-    private final Setting<SettingColor> sectionLine = sectionGroup.add(new ColorSetting.Builder()
-        .name("line-color")
-        .defaultValue(new SettingColor(70, 160, 255, 200)).build());
-
-    private final Setting<SettingColor> sectionSide = sectionGroup.add(new ColorSetting.Builder()
-        .name("fill-color")
-        .defaultValue(new SettingColor(70, 160, 255, 28)).build());
-
-    private final Setting<SettingColor> bracketColor = sectionGroup.add(new ColorSetting.Builder()
-        .name("bracket-color")
-        .defaultValue(new SettingColor(130, 200, 255, 255)).build());
-
-    // ---- debris blocks
-    private final Setting<Boolean> showDebris = debrisGroup.add(new BoolSetting.Builder()
+    private final Setting<Boolean> showDebris = general.add(new BoolSetting.Builder()
         .name("show-debris")
-        .description("Paint real ancient debris blocks the client knows about.")
+        .description("Draw ancient debris blocks the client knows about.")
         .defaultValue(true).build());
 
-    private final Setting<Integer> debrisRange = debrisGroup.add(new IntSetting.Builder()
+    private final Setting<Integer> debrisRange = general.add(new IntSetting.Builder()
         .name("debris-range")
-        .description("Max distance in blocks for painted debris.")
+        .description("Max distance in blocks for drawn debris.")
         .defaultValue(96).min(8).sliderMax(256).build());
 
-    private final Setting<Integer> maxDebris = debrisGroup.add(new IntSetting.Builder()
-        .name("max-debris")
-        .description("Max number of debris blocks painted at once (nearest first).")
-        .defaultValue(256).min(1).sliderMax(1024).build());
+    private final Setting<Boolean> debrisTracers = general.add(new BoolSetting.Builder()
+        .name("debris-tracers")
+        .description("Line from you to every revealed ancient debris.")
+        .defaultValue(true).build());
 
-    private final Setting<ShapeMode> debrisShape = debrisGroup.add(new EnumSetting.Builder<ShapeMode>()
+    private final Setting<SettingColor> debrisSide = general.add(new ColorSetting.Builder()
+        .name("debris-side-color")
+        .defaultValue(new SettingColor(255, 0, 0, 70)).build());
+
+    private final Setting<SettingColor> debrisLine = general.add(new ColorSetting.Builder()
+        .name("debris-line-color")
+        .defaultValue(new SettingColor(255, 0, 0, 240)).build());
+
+    // ---- hidden sections
+    private final Setting<Boolean> outline = sectionGroup.add(new BoolSetting.Builder()
+        .name("outline")
+        .description("Thin outline of hidden sections. The inside is never filled.")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> sectionRange = sectionGroup.add(new IntSetting.Builder()
+        .name("range-chunks")
+        .description("Max distance in chunks for the outline.")
+        .defaultValue(12).min(1).sliderMax(48).build());
+
+    private final Setting<Integer> maxSections = sectionGroup.add(new IntSetting.Builder()
+        .name("max-outlines")
+        .description("Max outlines drawn at once (nearest first).")
+        .defaultValue(48).min(1).sliderMax(256).build());
+
+    private final Setting<Integer> outlineThickness = sectionGroup.add(new IntSetting.Builder()
+        .name("outline-thickness")
+        .description("Lines are one pixel wide, so this draws that many nested outlines to look thicker.")
+        .defaultValue(4).min(1).max(8).sliderMin(1).sliderMax(8).build());
+
+    private final Setting<SettingColor> outlineColor = sectionGroup.add(new ColorSetting.Builder()
+        .name("outline-color")
+        .defaultValue(new SettingColor(30, 80, 255, 235)).build());
+
+    // ---- enclosed blocks
+    private final Setting<Boolean> enclosed = blockGroup.add(new BoolSetting.Builder()
+        .name("enclosed-netherrack")
+        .description("Inside hidden sections, draw only netherrack that is closed on all six sides.")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> layers = blockGroup.add(new IntSetting.Builder()
+        .name("layers")
+        .description("How many layers deep the rock must be closed. 1 = six neighbours solid, 2 = their neighbours too.")
+        .defaultValue(2).min(1).max(3).sliderMin(1).sliderMax(3).build());
+
+    private final Setting<Integer> blockRange = blockGroup.add(new IntSetting.Builder()
+        .name("block-range")
+        .description("Only blocks this close to you are drawn.")
+        .defaultValue(24).min(4).sliderMax(64).build());
+
+    private final Setting<Integer> maxBlocks = blockGroup.add(new IntSetting.Builder()
+        .name("max-blocks")
+        .description("Max blocks drawn at once (nearest first).")
+        .defaultValue(400).min(1).sliderMax(2000).build());
+
+    private final Setting<ShapeMode> shapeMode = blockGroup.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
         .defaultValue(ShapeMode.Both).build());
 
-    private final Setting<SettingColor> debrisSide = debrisGroup.add(new ColorSetting.Builder()
-        .name("side-color")
-        .defaultValue(new SettingColor(70, 150, 255, 85)).build());
-
-    private final Setting<SettingColor> debrisLine = debrisGroup.add(new ColorSetting.Builder()
+    private final Setting<SettingColor> lineColor = blockGroup.add(new ColorSetting.Builder()
         .name("line-color")
-        .defaultValue(new SettingColor(110, 190, 255, 230)).build());
+        .description("Edge colour of enclosed netherrack. The inside is never filled.")
+        .defaultValue(new SettingColor(25, 70, 235, 230)).build());
+
+    private final Setting<Boolean> inferred = blockGroup.add(new BoolSetting.Builder()
+        .name("inferred-netherite")
+        .description("Netherrack whose six neighbours are netherrack and closed on every side. Any air or lava around it cancels it. Drawn in yellow.")
+        .defaultValue(true).build());
+
+    private final Setting<Integer> maxInferred = blockGroup.add(new IntSetting.Builder()
+        .name("max-inferred")
+        .description("Max yellow blocks drawn at once (nearest first).")
+        .defaultValue(200).min(1).sliderMax(1000).build());
+
+    private final Setting<SettingColor> inferredSide = blockGroup.add(new ColorSetting.Builder()
+        .name("inferred-side-color")
+        .defaultValue(new SettingColor(255, 210, 0, 70)).build());
+
+    private final Setting<SettingColor> inferredLine = blockGroup.add(new ColorSetting.Builder()
+        .name("inferred-line-color")
+        .defaultValue(new SettingColor(255, 225, 0, 235)).build());
+
+    // ---- item esp
+    private final Setting<Boolean> itemEsp = itemGroup.add(new BoolSetting.Builder()
+        .name("item-esp")
+        .description("Box around netherite items lying on the ground, after something dropped them. Works in every dimension.")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> itemDebris = itemGroup.add(new BoolSetting.Builder()
+        .name("ancient-debris").defaultValue(true).build());
+
+    private final Setting<Boolean> itemScrap = itemGroup.add(new BoolSetting.Builder()
+        .name("netherite-scrap").defaultValue(true).build());
+
+    private final Setting<Boolean> itemIngot = itemGroup.add(new BoolSetting.Builder()
+        .name("netherite-ingot").defaultValue(true).build());
+
+    private final Setting<Boolean> itemBlock = itemGroup.add(new BoolSetting.Builder()
+        .name("netherite-block").defaultValue(false).build());
+
+    private final Setting<Integer> itemRange = itemGroup.add(new IntSetting.Builder()
+        .name("range")
+        .description("Max distance in blocks.")
+        .defaultValue(128).min(8).sliderMax(256).build());
+
+    private final Setting<SettingColor> itemSide = itemGroup.add(new ColorSetting.Builder()
+        .name("side-color")
+        .defaultValue(new SettingColor(15, 45, 190, 70)).build());
+
+    private final Setting<SettingColor> itemLine = itemGroup.add(new ColorSetting.Builder()
+        .name("line-color")
+        .defaultValue(new SettingColor(30, 80, 240, 235)).build());
 
     private record Section(int cx, int sy, int cz) {}
-    private record Visible(Section section, double distance) {}
-    private record Label(Vector3d pos, String text) {}
+    private record Dist(long packed, double distSq) {}
+    private record Computed(long[] enclosed, long[] yellow) {}
 
     // Only touched on the client thread.
     private final Set<Section> candidates = new LinkedHashSet<>();
     private final Set<Long> debris = new LinkedHashSet<>();
-    private final Set<Long> potentialNetherite = new LinkedHashSet<>();
-    private final List<Label> labels = new ArrayList<>();
+    private final Map<Section, Computed> cache = new HashMap<>();  // scan result per section
+    private long[] visible = new long[0];        // enclosed netherrack, blue edges
+    private long[] visibleYellow = new long[0];  // inferred netherite, yellow
     private ClientWorld lastWorld;
-    private int pendingNew;
-    private Section nearestNew;
-    private double nearestNewDistSq;
-    private long lastNotifyAt;
+    private int lastLayers = -1;
+    private int tick;
+    private boolean rebuild;
 
     public NetheriteFinderPlus() {
         super(MazaCategory.INSTANCE, "netherite-finder-plus",
-            "Outlines Nether chunk sections that hide ancient debris and paints real debris blocks (blue).");
+            "Draws deeply enclosed netherrack inside Nether sections that hide ancient debris.");
     }
 
     @Override
@@ -210,11 +246,12 @@ public class NetheriteFinderPlus extends Module {
     private void clearAll() {
         candidates.clear();
         debris.clear();
-        potentialNetherite.clear();
-        labels.clear();
+        cache.clear();
+        visible = new long[0];
+        visibleYellow = new long[0];
         lastWorld = null;
-        pendingNew = 0;
-        nearestNew = null;
+        lastLayers = -1;
+        rebuild = true;
     }
 
     // ---------------------------------------------------------------- packets
@@ -223,9 +260,8 @@ public class NetheriteFinderPlus extends Module {
     private void onPacket(PacketEvent.Receive event) {
         Object packet = event.packet;
 
-        // PacketEvent.Receive runs on the client networking thread. Copy the section
-        // buffer immediately, because the original may be released after the callback,
-        // and never defer the original ByteBuf itself to mc.execute().
+        // PacketEvent.Receive runs on the networking thread. Copy the section buffer right
+        // away (the original may be released after the callback) and hand only the copy on.
         if (packet instanceof ChunkDataS2CPacket chunkPacket) {
             PacketByteBuf original = chunkPacket.getChunkData().getSectionsDataBuf();
             PacketByteBuf copy = new PacketByteBuf(original.copy());
@@ -244,9 +280,16 @@ public class NetheriteFinderPlus extends Module {
     @EventHandler
     private void onChunkData(ChunkDataEvent event) {
         // Fires on the client thread once the chunk is really in the world.
-        if (!showDebris.get() || mc.world == null || event.chunk() == null || !isNether(mc.world)) return;
+        if (mc.world == null || event.chunk() == null || !isNether(mc.world)) return;
         trackWorld(mc.world);
-        collectDebris(event.chunk());
+
+        ChunkPos cp = event.chunk().getPos();
+
+        // A new chunk changes what the neighbouring sections can see across the border.
+        cache.keySet().removeIf(s -> Math.abs(s.cx() - cp.x) <= 1 && Math.abs(s.cz() - cp.z) <= 1);
+        rebuild = true;
+
+        if (showDebris.get()) collectDebris(event.chunk());
     }
 
     private void handleChunkData(int cx, int cz, PacketByteBuf buf) {
@@ -268,48 +311,52 @@ public class NetheriteFinderPlus extends Module {
 
         // A fresh chunk replaces the old analysis for that chunk.
         candidates.removeIf(s -> s.cx() == cx && s.cz() == cz);
+        cache.keySet().removeIf(s -> s.cx() == cx && s.cz() == cz);
 
-        // A hidden-palette candidate has NO currently placed debris block, so it must not
-        // be confirmed with ChunkSection.hasAny(ANCIENT_DEBRIS).
-        for (int sy : hidden) add(new Section(cx, sy, cz));
+        // A hidden-palette candidate has no placed debris block, so it must not be
+        // confirmed with ChunkSection.hasAny(ANCIENT_DEBRIS).
+        for (int sy : hidden) addCandidate(new Section(cx, sy, cz));
+        rebuild = true;
     }
 
     private void handleBlock(BlockPos pos, BlockState state) {
         if (!isActive() || mc.world == null || !isNether(mc.world)) return;
-        long packed = pos.asLong();
 
+        invalidateAround(pos);
+
+        long packed = pos.asLong();
         if (!state.isOf(Blocks.ANCIENT_DEBRIS)) {
             debris.remove(packed); // mined or replaced
             return;
         }
 
-        // Real debris became visible here: the section is no longer purely "hidden".
-        candidates.remove(new Section(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4));
+        // Real debris became visible: this section is no longer purely "hidden".
+        Section section = new Section(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
+        candidates.remove(section);
+        cache.remove(section);
 
-        if (showDebris.get() && debris.add(packed)) {
-            trimDebris();
-            if (notifyReveals.get()) {
-                info("Ancient debris at %d, %d, %d", pos.getX(), pos.getY(), pos.getZ());
-            }
+        if (showDebris.get() && debris.add(packed)) trimDebris();
+    }
+
+    /** A changed block can open or close rock in this section and in the ones touching it. */
+    private void invalidateAround(BlockPos pos) {
+        int cx = pos.getX() >> 4;
+        int cy = pos.getY() >> 4;
+        int cz = pos.getZ() >> 4;
+        if (cache.keySet().removeIf(s -> Math.abs(s.cx() - cx) <= 1
+            && Math.abs(s.sy() - cy) <= 1 && Math.abs(s.cz() - cz) <= 1)) {
+            rebuild = true;
         }
     }
 
-    private void add(Section section) {
+    private void addCandidate(Section section) {
         if (!candidates.add(section)) return;
 
         while (candidates.size() > MAX_CANDIDATES) {
             Iterator<Section> it = candidates.iterator();
-            it.next();
+            Section old = it.next();
             it.remove();
-        }
-
-        pendingNew++;
-        if (mc.player != null) {
-            double d = distSq(section);
-            if (nearestNew == null || d < nearestNewDistSq) {
-                nearestNew = section;
-                nearestNewDistSq = d;
-            }
+            cache.remove(old);
         }
     }
 
@@ -370,23 +417,27 @@ public class NetheriteFinderPlus extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.world == null) return;
+        if (mc.world == null || mc.player == null) return;
         trackWorld(mc.world);
+        tick++;
 
-        if (pendingNew > 0 && notify.get()) {
-            long now = System.currentTimeMillis();
-            if (now - lastNotifyAt >= 3000) {
-                lastNotifyAt = now;
-                String where = nearestNew == null ? ""
-                    : String.format(", nearest at %d, %d, %d",
-                        nearestNew.cx() * 16 + 8, nearestNew.sy() * 16 + 8, nearestNew.cz() * 16 + 8);
-                info("%d new hidden-debris section(s)%s", pendingNew, where);
-                pendingNew = 0;
-                nearestNew = null;
-            }
-        } else if (!notify.get()) {
-            pendingNew = 0;
-            nearestNew = null;
+        int signature = layers.get() * 4 + (enclosed.get() ? 2 : 0) + (inferred.get() ? 1 : 0);
+        if (lastLayers != signature) {
+            lastLayers = signature;
+            cache.clear();
+            rebuild = true;
+        }
+
+        if (!enclosed.get() && !inferred.get()) {
+            visible = new long[0];
+            visibleYellow = new long[0];
+            return;
+        }
+
+        if (isNether(mc.world)) computeNearby();
+        if (rebuild || tick % REBUILD_INTERVAL == 0) {
+            rebuild = false;
+            rebuildVisible();
         }
     }
 
@@ -394,193 +445,380 @@ public class NetheriteFinderPlus extends Module {
         if (lastWorld != world) {
             candidates.clear();
             debris.clear();
-        potentialNetherite.clear();
-            labels.clear();
-            pendingNew = 0;
-            nearestNew = null;
+            cache.clear();
+            visible = new long[0];
+            visibleYellow = new long[0];
             lastWorld = world;
+            rebuild = true;
         }
+    }
+
+    /** Scan the nearest hidden sections that are not cached yet, a couple per tick. */
+    private void computeNearby() {
+        if (candidates.isEmpty()) return;
+
+        Vec3d eye = mc.player.getEyePos();
+        double reach = blockRange.get();
+        double reachSq = reach * reach;
+
+        List<Section> need = null;
+        for (Section s : candidates) {
+            if (cache.containsKey(s)) continue;
+            if (boxDistSq(s, eye) > reachSq) continue;
+            if (need == null) need = new ArrayList<>();
+            need.add(s);
+        }
+        if (need == null) return;
+
+        need.sort(Comparator.comparingDouble(s -> boxDistSq(s, eye)));
+
+        int budget = COMPUTE_PER_TICK;
+        for (Section s : need) {
+            if (budget-- <= 0) break;
+
+            Computed result = computeSection(s);
+            if (result == null) continue; // own chunk not loaded yet, try again later
+
+            while (cache.size() >= MAX_CACHED_SECTIONS) {
+                Iterator<Section> it = cache.keySet().iterator();
+                it.next();
+                it.remove();
+            }
+            cache.put(s, result);
+            rebuild = true;
+        }
+    }
+
+    /**
+     * Scan one section from the chunk data the client already has.
+     *
+     * A cell is solid when it is neither air nor a fluid (lava counts as open space) and
+     * its chunk is loaded. Unknown space is treated as open, so rock next to an unloaded
+     * chunk is never claimed to be closed.
+     *
+     *  enclosed: netherrack that is closed on six sides, repeated N times (N erosion
+     *            passes with the six-neighbour kernel).
+     *  yellow:   netherrack whose six neighbours are all netherrack and whose neighbours
+     *            are in turn closed on all of their sides. One bit of air or lava anywhere
+     *            in that 2-block diamond cancels it.
+     *
+     * The grid carries a margin of max(N, 2) blocks so both checks stay inside it.
+     */
+    private Computed computeSection(Section section) {
+        ClientWorld world = mc.world;
+        int n = layers.get();
+        int m = Math.max(n, 2);
+        int size = 16 + 2 * m;
+
+        WorldChunk[][] chunks = new WorldChunk[3][3];
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                chunks[dx + 1][dz + 1] = world.getChunkManager().getWorldChunk(section.cx() + dx, section.cz() + dz);
+            }
+        }
+        if (chunks[1][1] == null) return null;
+
+        int baseX = section.cx() * 16 - m;
+        int baseY = section.sy() * 16 - m;
+        int baseZ = section.cz() * 16 - m;
+
+        boolean[] solid = new boolean[size * size * size];
+        boolean[] rack = new boolean[size * size * size];
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+
+        for (int y = 0; y < size; y++) {
+            for (int z = 0; z < size; z++) {
+                int wz = baseZ + z;
+                for (int x = 0; x < size; x++) {
+                    int wx = baseX + x;
+                    WorldChunk chunk = chunks[(wx >> 4) - section.cx() + 1][(wz >> 4) - section.cz() + 1];
+                    if (chunk == null) continue;
+
+                    pos.set(wx, baseY + y, wz);
+                    BlockState state = chunk.getBlockState(pos);
+                    if (state.isAir() || !state.getFluidState().isEmpty()) continue;
+
+                    int index = (y * size + z) * size + x;
+                    solid[index] = true;
+                    rack[index] = state.isOf(Blocks.NETHERRACK);
+                }
+            }
+        }
+
+        int layer = size * size;
+        long[] enclosedOut = new long[0];
+
+        if (enclosed.get()) {
+            boolean[] current = solid;
+            for (int step = 1; step <= n; step++) {
+                boolean[] next = new boolean[current.length];
+                for (int y = step; y < size - step; y++) {
+                    for (int z = step; z < size - step; z++) {
+                        for (int x = step; x < size - step; x++) {
+                            int i = (y * size + z) * size + x;
+                            next[i] = current[i]
+                                && current[i - 1] && current[i + 1]
+                                && current[i - size] && current[i + size]
+                                && current[i - layer] && current[i + layer];
+                        }
+                    }
+                }
+                current = next;
+            }
+
+            List<Long> out = new ArrayList<>();
+            for (int y = m; y < m + 16; y++) {
+                for (int z = m; z < m + 16; z++) {
+                    for (int x = m; x < m + 16; x++) {
+                        int i = (y * size + z) * size + x;
+                        if (current[i] && rack[i]) out.add(BlockPos.asLong(baseX + x, baseY + y, baseZ + z));
+                    }
+                }
+            }
+            enclosedOut = toArray(out);
+        }
+
+        long[] yellowOut = new long[0];
+
+        if (inferred.get()) {
+            int[] around = {-1, 1, -size, size, -layer, layer};
+            List<Long> out = new ArrayList<>();
+
+            for (int y = m; y < m + 16; y++) {
+                for (int z = m; z < m + 16; z++) {
+                    for (int x = m; x < m + 16; x++) {
+                        int i = (y * size + z) * size + x;
+                        if (!rack[i] || !closedAround(i, around, rack, solid)) continue;
+                        out.add(BlockPos.asLong(baseX + x, baseY + y, baseZ + z));
+                    }
+                }
+            }
+            yellowOut = toArray(out);
+        }
+
+        return new Computed(enclosedOut, yellowOut);
+    }
+
+    /** Six netherrack neighbours, and every neighbour of those neighbours solid (no air, no lava). */
+    private static boolean closedAround(int center, int[] around, boolean[] rack, boolean[] solid) {
+        for (int a : around) {
+            int neighbour = center + a;
+            if (!rack[neighbour]) return false;
+
+            for (int b : around) {
+                if (!solid[neighbour + b]) return false;
+            }
+        }
+        return true;
+    }
+
+    private static long[] toArray(List<Long> list) {
+        long[] result = new long[list.size()];
+        for (int i = 0; i < result.length; i++) result[i] = list.get(i);
+        return result;
+    }
+
+    /** Gather the cached blocks near the player, nearest first, capped per colour. */
+    private void rebuildVisible() {
+        Vec3d eye = mc.player.getEyePos();
+        double reach = blockRange.get();
+        double reachSq = reach * reach;
+
+        List<Dist> blue = new ArrayList<>();
+        List<Dist> yellow = new ArrayList<>();
+
+        for (Map.Entry<Section, Computed> e : cache.entrySet()) {
+            if (!candidates.contains(e.getKey())) continue;
+            if (boxDistSq(e.getKey(), eye) > reachSq) continue;
+
+            collectNear(e.getValue().enclosed(), eye, reachSq, blue);
+            collectNear(e.getValue().yellow(), eye, reachSq, yellow);
+        }
+
+        visible = nearest(blue, maxBlocks.get());
+        visibleYellow = nearest(yellow, maxInferred.get());
+    }
+
+    private static void collectNear(long[] blocks, Vec3d eye, double reachSq, List<Dist> out) {
+        for (long packed : blocks) {
+            double dx = BlockPos.unpackLongX(packed) + 0.5 - eye.x;
+            double dy = BlockPos.unpackLongY(packed) + 0.5 - eye.y;
+            double dz = BlockPos.unpackLongZ(packed) + 0.5 - eye.z;
+            double d = dx * dx + dy * dy + dz * dz;
+            if (d <= reachSq) out.add(new Dist(packed, d));
+        }
+    }
+
+    private static long[] nearest(List<Dist> list, int max) {
+        list.sort(Comparator.comparingDouble(Dist::distSq));
+        int limit = Math.min(list.size(), max);
+
+        long[] result = new long[limit];
+        for (int i = 0; i < limit; i++) result[i] = list.get(i).packed();
+        return result;
     }
 
     // ----------------------------------------------------------------- render
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        labels.clear();
-        if (mc.world == null || mc.player == null || !isNether(mc.world)) return;
+        if (mc.world == null || mc.player == null) return;
 
-        renderSections(event);
-        if (showDebris.get()) renderDebris(event);
+        // Dropped items are worth showing in any dimension, the rest is Nether only.
+        if (itemEsp.get()) renderItems(event);
+        if (!isNether(mc.world)) return;
+
+        if (outline.get() && !candidates.isEmpty()) renderOutlines(event);
+
+        // Enclosed netherrack: blue edges only, the inside stays see-through.
+        if (enclosed.get() && visible.length > 0) {
+            Color none = new Color(0, 0, 0, 0);
+            Color line = lineColor.get();
+            double e = 0.002;
+
+            for (long packed : visible) {
+                double x = BlockPos.unpackLongX(packed);
+                double y = BlockPos.unpackLongY(packed);
+                double z = BlockPos.unpackLongZ(packed);
+                event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e, none, line, ShapeMode.Lines, 0);
+            }
+        }
+
+        // Inferred netherite: yellow, drawn over the blue edges.
+        if (inferred.get() && visibleYellow.length > 0) {
+            Color side = inferredSide.get();
+            Color line = inferredLine.get();
+            double e = 0.004;
+
+            for (long packed : visibleYellow) {
+                double x = BlockPos.unpackLongX(packed);
+                double y = BlockPos.unpackLongY(packed);
+                double z = BlockPos.unpackLongZ(packed);
+                event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e, side, line, ShapeMode.Both, 0);
+            }
+        }
+
+        if (showDebris.get() && !debris.isEmpty()) renderDebris(event);
     }
 
-    private void renderSections(Render3DEvent event) {
-        if (candidates.isEmpty()) return;
-
+    /** Box around every wanted item entity lying in the world. */
+    private void renderItems(Render3DEvent event) {
         Vec3d eye = mc.player.getEyePos();
-        double maxDistance = renderRange.get() * 16.0;
-
-        List<Visible> visible = new ArrayList<>();
-        for (Section s : candidates) {
-            double d = Math.sqrt(boxDistSq(s, eye));
-            if (d <= maxDistance) visible.add(new Visible(s, d));
-        }
-        if (visible.isEmpty()) return;
-
-        visible.sort(Comparator.comparingDouble(Visible::distance));
-        int limit = Math.min(visible.size(), maxBoxes.get());
-
-        double wave = pulse.get()
-            ? 0.5 + 0.5 * Math.sin((System.currentTimeMillis() % (long) PULSE_MS) / PULSE_MS * Math.PI * 2.0)
-            : 0.5;
-
-        double yaw = Math.toRadians(mc.player.getYaw());
-        double pitch = Math.toRadians(mc.player.getPitch());
-        double cosPitch = Math.cos(pitch);
-        double sx = eye.x + -Math.sin(yaw) * cosPitch * 0.6;
-        double sy = eye.y + -Math.sin(pitch) * 0.6;
-        double sz = eye.z + Math.cos(yaw) * cosPitch * 0.6;
-
-        for (int i = 0; i < limit; i++) {
-            Visible v = visible.get(i);
-            Section s = v.section();
-
-            double x1 = s.cx() * 16.0;
-            double y1 = s.sy() * 16.0;
-            double z1 = s.cz() * 16.0;
-            double x2 = x1 + 16.0;
-            double y2 = y1 + 16.0;
-            double z2 = z1 + 16.0;
-
-            // Far sections are faint, near ones strong.
-            double near = 0.35 + 0.65 * Math.max(0.0, 1.0 - v.distance() / maxDistance);
-            double glow = near * (0.75 + 0.25 * wave);
-
-            Color line = scale(sectionLine.get(), glow);
-            Color side = scale(sectionSide.get(), near);
-
-            if (sectionOutline.get() || sectionFill.get()) {
-                ShapeMode mode = sectionFill.get()
-                    ? (sectionOutline.get() ? ShapeMode.Both : ShapeMode.Sides)
-                    : ShapeMode.Lines;
-                event.renderer.box(x1, y1, z1, x2, y2, z2, side, line, mode, 0);
-            }
-
-            if (brackets.get()) drawBrackets(event, x1, y1, z1, x2, y2, z2, scale(bracketColor.get(), near));
-
-            double cx = (x1 + x2) / 2.0;
-            double cy = (y1 + y2) / 2.0;
-            double cz = (z1 + z2) / 2.0;
-
-            if (sectionTracers.get() && i < tracerLimit.get()) {
-                event.renderer.line(sx, sy, sz, cx, cy, cz, scale(sectionLine.get(), 0.9));
-            }
-
-            if (distanceLabels.get() && i < labelLimit.get()) {
-                labels.add(new Label(new Vector3d(cx, cy + 1.0, cz),
-                    String.format(Locale.ROOT, "%.0fm", v.distance())));
-            }
-        }
-    }
-
-    private void drawBrackets(Render3DEvent event, double x1, double y1, double z1,
-                              double x2, double y2, double z2, Color color) {
-        for (int ix = 0; ix < 2; ix++) {
-            for (int iy = 0; iy < 2; iy++) {
-                for (int iz = 0; iz < 2; iz++) {
-                    double x = ix == 0 ? x1 : x2;
-                    double y = iy == 0 ? y1 : y2;
-                    double z = iz == 0 ? z1 : z2;
-                    double dx = ix == 0 ? BRACKET : -BRACKET;
-                    double dy = iy == 0 ? BRACKET : -BRACKET;
-                    double dz = iz == 0 ? BRACKET : -BRACKET;
-
-                    event.renderer.line(x, y, z, x + dx, y, z, color);
-                    event.renderer.line(x, y, z, x, y + dy, z, color);
-                    event.renderer.line(x, y, z, x, y, z + dz, color);
-                }
-            }
-        }
-    }
-
-    private void renderDebris(Render3DEvent event) {
-        if (debris.isEmpty()) return;
-
-        Vec3d eye = mc.player.getEyePos();
-        double range = debrisRange.get();
+        double range = itemRange.get();
         double rangeSq = range * range;
 
-        List<BlockPos> shown = new ArrayList<>();
-        List<Long> gone = null;
+        Color side = itemSide.get();
+        Color line = itemLine.get();
+        ShapeMode mode = shapeMode.get();
+        double grow = 0.08; // dropped items are tiny, make them easy to spot
 
-        for (long packed : debris) {
-            BlockPos pos = BlockPos.fromLong(packed);
-            double dx = pos.getX() + 0.5 - eye.x;
-            double dy = pos.getY() + 0.5 - eye.y;
-            double dz = pos.getZ() + 0.5 - eye.z;
+        for (Entity entity : mc.world.getEntities()) {
+            if (!(entity instanceof ItemEntity item)) continue;
+            if (!wantsItem(item.getStack())) continue;
+
+            double dx = item.getX() - eye.x;
+            double dy = item.getY() - eye.y;
+            double dz = item.getZ() - eye.z;
             if (dx * dx + dy * dy + dz * dz > rangeSq) continue;
 
-            // Self-cleaning: if the block is no longer debris, forget it.
-            if (!mc.world.getBlockState(pos).isOf(Blocks.ANCIENT_DEBRIS)) {
-                if (gone == null) gone = new ArrayList<>();
-                gone.add(packed);
-                continue;
-            }
-            shown.add(pos);
-        }
-
-        if (gone != null) debris.removeAll(gone);
-        if (shown.isEmpty()) return;
-
-        shown.sort(Comparator.comparingDouble(p -> {
-            double dx = p.getX() + 0.5 - eye.x;
-            double dy = p.getY() + 0.5 - eye.y;
-            double dz = p.getZ() + 0.5 - eye.z;
-            return dx * dx + dy * dy + dz * dz;
-        }));
-
-        int limit = Math.min(shown.size(), maxDebris.get());
-        double e = 0.002; // avoid z-fighting with the block faces
-
-        // Only the block itself is painted, never the air around it.
-        for (int i = 0; i < limit; i++) {
-            BlockPos p = shown.get(i);
+            Box b = item.getBoundingBox();
             event.renderer.box(
-                p.getX() - e, p.getY() - e, p.getZ() - e,
-                p.getX() + 1 + e, p.getY() + 1 + e, p.getZ() + 1 + e,
-                debrisSide.get(), debrisLine.get(), debrisShape.get(), 0
+                b.minX - grow, b.minY - grow, b.minZ - grow,
+                b.maxX + grow, b.maxY + grow, b.maxZ + grow,
+                side, line, mode, 0
             );
         }
     }
 
-    @EventHandler
-    private void onRender2D(Render2DEvent event) {
-        if (labels.isEmpty() || mc.world == null || mc.player == null) return;
+    private boolean wantsItem(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        return (itemDebris.get() && stack.isOf(Items.ANCIENT_DEBRIS))
+            || (itemScrap.get() && stack.isOf(Items.NETHERITE_SCRAP))
+            || (itemIngot.get() && stack.isOf(Items.NETHERITE_INGOT))
+            || (itemBlock.get() && stack.isOf(Items.NETHERITE_BLOCK));
+    }
 
-        TextRenderer text = TextRenderer.get();
-        Color white = new Color(255, 255, 255, 255);
+    /** Hidden section outline. Lines are 1px, so nested outlines make it thick. */
+    private void renderOutlines(Render3DEvent event) {
+        Vec3d eye = mc.player.getEyePos();
+        double maxDistance = sectionRange.get() * 16.0;
+        double maxSq = maxDistance * maxDistance;
 
-        for (Label label : labels) {
-            if (!NametagUtils.to2D(label.pos(), 1.0, true)) continue;
+        List<Section> near = new ArrayList<>();
+        for (Section s : candidates) {
+            if (boxDistSq(s, eye) <= maxSq) near.add(s);
+        }
+        if (near.isEmpty()) return;
 
-            NametagUtils.begin(label.pos());
-            text.beginBig();
-            double half = text.getWidth(label.text(), true) / 2.0;
-            text.render(label.text(), -half, -text.getHeight(true), white, true);
-            text.end();
-            NametagUtils.end();
+        near.sort(Comparator.comparingDouble(s -> boxDistSq(s, eye)));
+        int limit = Math.min(near.size(), maxSections.get());
+
+        Color line = outlineColor.get();
+        Color none = new Color(0, 0, 0, 0);
+        int passes = outlineThickness.get();
+        double step = 0.05;
+
+        for (int i = 0; i < limit; i++) {
+            Section s = near.get(i);
+            double x = s.cx() * 16.0;
+            double y = s.sy() * 16.0;
+            double z = s.cz() * 16.0;
+
+            for (int k = 0; k < passes; k++) {
+                double g = (k - (passes - 1) / 2.0) * step;
+                event.renderer.box(x - g, y - g, z - g, x + 16.0 + g, y + 16.0 + g, z + 16.0 + g,
+                    none, line, ShapeMode.Lines, 0);
+            }
         }
     }
 
-    private static Color scale(Color base, double factor) {
-        int a = (int) Math.max(0, Math.min(255, base.a * factor));
-        return new Color(base.r, base.g, base.b, a);
+    /** Revealed ancient debris: red box and a line from you to it. */
+    private void renderDebris(Render3DEvent event) {
+        Vec3d eye = mc.player.getEyePos();
+        double range = debrisRange.get();
+        double rangeSq = range * range;
+        double e = 0.002;
+
+        Color side = debrisSide.get();
+        Color line = debrisLine.get();
+        boolean tracers = debrisTracers.get();
+        double[] start = tracers ? tracerStart() : null;
+        List<Long> gone = null;
+
+        for (long packed : debris) {
+            int x = BlockPos.unpackLongX(packed);
+            int y = BlockPos.unpackLongY(packed);
+            int z = BlockPos.unpackLongZ(packed);
+
+            double dx = x + 0.5 - eye.x;
+            double dy = y + 0.5 - eye.y;
+            double dz = z + 0.5 - eye.z;
+            if (dx * dx + dy * dy + dz * dz > rangeSq) continue;
+
+            // Self-cleaning: if the block is no longer debris, forget it.
+            if (!mc.world.getBlockState(BlockPos.fromLong(packed)).isOf(Blocks.ANCIENT_DEBRIS)) {
+                if (gone == null) gone = new ArrayList<>();
+                gone.add(packed);
+                continue;
+            }
+
+            event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e, side, line, ShapeMode.Both, 0);
+            if (tracers) event.renderer.line(start[0], start[1], start[2], x + 0.5, y + 0.5, z + 0.5, line);
+        }
+
+        if (gone != null) debris.removeAll(gone);
     }
 
-    private double distSq(Section s) {
-        double dx = s.cx() * 16.0 + 8.0 - mc.player.getX();
-        double dy = s.sy() * 16.0 + 8.0 - mc.player.getY();
-        double dz = s.cz() * 16.0 + 8.0 - mc.player.getZ();
-        return dx * dx + dy * dy + dz * dz;
+    /** Tracer origin a little in front of the camera, from yaw and pitch. */
+    private double[] tracerStart() {
+        double yaw = Math.toRadians(mc.player.getYaw());
+        double pitch = Math.toRadians(mc.player.getPitch());
+        double cosPitch = Math.cos(pitch);
+        return new double[]{
+            mc.player.getX() - Math.sin(yaw) * cosPitch * 0.6,
+            mc.player.getEyeY() - Math.sin(pitch) * 0.6,
+            mc.player.getZ() + Math.cos(yaw) * cosPitch * 0.6
+        };
     }
 
     /** Squared distance from a point to the nearest point of the section's box. */
@@ -600,78 +838,6 @@ public class NetheriteFinderPlus extends Module {
         return world.getDimensionEntry().matchesKey(DimensionTypes.THE_NETHER);
     }
 
-
-    private void scanForPotentialNetherite(WorldChunk chunk) {
-        if (mc.world == null || !showDebris.get()) return;
-        potentialNetherite.clear();
-        
-        ChunkPos cp = chunk.getPos();
-        ChunkSection[] sections = chunk.getSectionArray();
-        if (sections == null) return;
-        int bottom = chunk.getBottomY();
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-
-        for (int i = 0; i < sections.length; i++) {
-            ChunkSection section = sections[i];
-            if (section == null || section.isEmpty()) continue;
-            int sectionBottom = bottom + i * 16;
-
-            for (int y = 0; y < 16; y++) {
-                for (int z = 0; z < 16; z++) {
-                    for (int x = 0; x < 16; x++) {
-                        BlockState state = section.getBlockState(x, y, z);
-                        if (!state.isOf(Blocks.NETHERRACK)) continue;
-
-                        int wx = cp.getStartX() + x;
-                        int wy = sectionBottom + y;
-                        int wz = cp.getStartZ() + z;
-
-                        if (isPotentialNetherite(wx, wy, wz)) {
-                            potentialNetherite.add(BlockPos.asLong(wx, wy, wz));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private boolean isPotentialNetherite(int x, int y, int z) {
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-        for (Direction d : DIRS) {
-            int nx = x + d.getOffsetX();
-            int ny = y + d.getOffsetY();
-            int nz = z + d.getOffsetZ();
-            pos.set(nx, ny, nz);
-            BlockState neighborState = mc.world.getBlockState(pos);
-            if (neighborState.isAir() || !neighborState.getFluidState().isEmpty()) return false;
-            if (!isFullyEnclosed(nx, ny, nz)) return false;
-        }
-        return true;
-    }
-
-    private boolean isFullyEnclosed(int x, int y, int z) {
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-        for (Direction d : DIRS) {
-            pos.set(x + d.getOffsetX(), y + d.getOffsetY(), z + d.getOffsetZ());
-            BlockState state = mc.world.getBlockState(pos);
-            if (state.isAir() || !state.getFluidState().isEmpty()) return false;
-        }
-        return true;
-    }
-
-    private void renderPotentialNetherite(Render3DEvent event) {
-        if (potentialNetherite.isEmpty()) return;
-        Color yellowSide = new Color(255, 200, 0, 70);
-        Color yellowLine = new Color(255, 220, 0, 220);
-        double e = 0.002;
-        for (long packed : potentialNetherite) {
-            int x = BlockPos.unpackLongX(packed);
-            int y = BlockPos.unpackLongY(packed);
-            int z = BlockPos.unpackLongZ(packed);
-            event.renderer.box(x - e, y - e, z - e, x + 1 + e, y + 1 + e, z + 1 + e,
-                yellowSide, yellowLine, ShapeMode.Both, 0);
-        }
-    }
     // ---------------------------------------------------------- palette scan
 
     /** Returns the section Y coords whose block palette holds {@code target} but no block uses it. */
