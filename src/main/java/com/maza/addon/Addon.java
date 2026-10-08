@@ -2,6 +2,7 @@ package com.maza.addon;
 
 import com.maza.addon.modules.AntiVanish;
 import com.maza.addon.modules.NetheriteFinderPlus;
+import com.maza.addon.modules.PlayerBypass;
 import com.maza.addon.modules.PrimeChunkFinder;
 import com.maza.addon.modules.StorageESP;
 import com.maza.addon.modules.SusChunkFinder;
@@ -27,6 +28,7 @@ public class Addon extends MeteorAddon {
         modules.add(new PrimeChunkFinder());
         modules.add(new StorageESP());
         modules.add(new AntiVanish());
+        modules.add(new PlayerBypass());
     }
 
     @Override
