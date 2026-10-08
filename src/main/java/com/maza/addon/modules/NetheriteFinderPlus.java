@@ -8,11 +8,11 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
-import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -31,7 +31,6 @@ import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.ChunkSection;
@@ -45,6 +44,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -154,10 +154,6 @@ public class NetheriteFinderPlus extends Module {
         .description("Max blocks drawn at once (nearest first).")
         .defaultValue(400).min(1).sliderMax(2000).build());
 
-    private final Setting<ShapeMode> shapeMode = blockGroup.add(new EnumSetting.Builder<ShapeMode>()
-        .name("shape-mode")
-        .defaultValue(ShapeMode.Both).build());
-
     private final Setting<SettingColor> lineColor = blockGroup.add(new ColorSetting.Builder()
         .name("line-color")
         .description("Edge colour of enclosed netherrack. The inside is never filled.")
@@ -171,7 +167,22 @@ public class NetheriteFinderPlus extends Module {
     private final Setting<Integer> maxInferred = blockGroup.add(new IntSetting.Builder()
         .name("max-inferred")
         .description("Max yellow blocks drawn at once (nearest first).")
-        .defaultValue(200).min(1).sliderMax(1000).build());
+        .defaultValue(60).min(1).sliderMax(500).build());
+
+    private final Setting<Integer> inferredMinY = blockGroup.add(new IntSetting.Builder()
+        .name("inferred-min-y")
+        .description("Lowest Y for yellow blocks. Ancient debris generates from Y 8.")
+        .defaultValue(8).min(0).max(127).sliderMin(0).sliderMax(127).build());
+
+    private final Setting<Integer> inferredMaxY = blockGroup.add(new IntSetting.Builder()
+        .name("inferred-max-y")
+        .description("Highest Y for yellow blocks. Large ancient debris veins stop around Y 24.")
+        .defaultValue(24).min(0).max(127).sliderMin(0).sliderMax(127).build());
+
+    private final Setting<Integer> inferredSpacing = blockGroup.add(new IntSetting.Builder()
+        .name("inferred-spacing")
+        .description("Min distance in blocks between two yellow blocks, so one open region gets a few marks instead of hundreds. 1 = no thinning.")
+        .defaultValue(3).min(1).max(8).sliderMin(1).sliderMax(8).build());
 
     private final Setting<SettingColor> inferredSide = blockGroup.add(new ColorSetting.Builder()
         .name("inferred-side-color")
@@ -184,7 +195,7 @@ public class NetheriteFinderPlus extends Module {
     // ---- item esp
     private final Setting<Boolean> itemEsp = itemGroup.add(new BoolSetting.Builder()
         .name("item-esp")
-        .description("Box around netherite items lying on the ground, after something dropped them. Works in every dimension.")
+        .description("Outline the edges of the block a dropped netherite item lies in. Works in every dimension.")
         .defaultValue(true).build());
 
     private final Setting<Boolean> itemDebris = itemGroup.add(new BoolSetting.Builder()
@@ -203,10 +214,6 @@ public class NetheriteFinderPlus extends Module {
         .name("range")
         .description("Max distance in blocks.")
         .defaultValue(128).min(8).sliderMax(256).build());
-
-    private final Setting<SettingColor> itemSide = itemGroup.add(new ColorSetting.Builder()
-        .name("side-color")
-        .defaultValue(new SettingColor(15, 45, 190, 70)).build());
 
     private final Setting<SettingColor> itemLine = itemGroup.add(new ColorSetting.Builder()
         .name("line-color")
@@ -421,7 +428,8 @@ public class NetheriteFinderPlus extends Module {
         trackWorld(mc.world);
         tick++;
 
-        int signature = layers.get() * 4 + (enclosed.get() ? 2 : 0) + (inferred.get() ? 1 : 0);
+        int signature = Objects.hash(layers.get(), enclosed.get(), inferred.get(),
+            inferredMinY.get(), inferredMaxY.get(), inferredSpacing.get());
         if (lastLayers != signature) {
             lastLayers = signature;
             cache.clear();
@@ -582,13 +590,23 @@ public class NetheriteFinderPlus extends Module {
 
         if (inferred.get()) {
             int[] around = {-1, 1, -size, size, -layer, layer};
+            int minWorldY = inferredMinY.get();
+            int maxWorldY = inferredMaxY.get();
+            int spacing = inferredSpacing.get();
+            List<int[]> kept = new ArrayList<>();
             List<Long> out = new ArrayList<>();
 
             for (int y = m; y < m + 16; y++) {
+                int worldY = baseY + y;
+                if (worldY < minWorldY || worldY > maxWorldY) continue;
+
                 for (int z = m; z < m + 16; z++) {
                     for (int x = m; x < m + 16; x++) {
                         int i = (y * size + z) * size + x;
                         if (!rack[i] || !closedAround(i, around, rack, solid)) continue;
+                        if (spacing > 1 && tooClose(kept, x, y, z, spacing)) continue;
+
+                        kept.add(new int[]{x, y, z});
                         out.add(BlockPos.asLong(baseX + x, baseY + y, baseZ + z));
                     }
                 }
@@ -610,6 +628,14 @@ public class NetheriteFinderPlus extends Module {
             }
         }
         return true;
+    }
+
+    /** True when an already chosen block is closer than {@code spacing} on every axis. */
+    private static boolean tooClose(List<int[]> kept, int x, int y, int z, int spacing) {
+        for (int[] k : kept) {
+            if (Math.abs(k[0] - x) < spacing && Math.abs(k[1] - y) < spacing && Math.abs(k[2] - z) < spacing) return true;
+        }
+        return false;
     }
 
     private static long[] toArray(List<Long> list) {
@@ -701,16 +727,14 @@ public class NetheriteFinderPlus extends Module {
         if (showDebris.get() && !debris.isEmpty()) renderDebris(event);
     }
 
-    /** Box around every wanted item entity lying in the world. */
+    /** Edges of the block cell every wanted item entity lies in. Lines only, nothing is filled. */
     private void renderItems(Render3DEvent event) {
         Vec3d eye = mc.player.getEyePos();
         double range = itemRange.get();
         double rangeSq = range * range;
 
-        Color side = itemSide.get();
+        Color none = new Color(0, 0, 0, 0);
         Color line = itemLine.get();
-        ShapeMode mode = shapeMode.get();
-        double grow = 0.08; // dropped items are tiny, make them easy to spot
 
         for (Entity entity : mc.world.getEntities()) {
             if (!(entity instanceof ItemEntity item)) continue;
@@ -721,12 +745,17 @@ public class NetheriteFinderPlus extends Module {
             double dz = item.getZ() - eye.z;
             if (dx * dx + dy * dy + dz * dz > rangeSq) continue;
 
-            Box b = item.getBoundingBox();
-            event.renderer.box(
-                b.minX - grow, b.minY - grow, b.minZ - grow,
-                b.maxX + grow, b.maxY + grow, b.maxZ + grow,
-                side, line, mode, 0
-            );
+            // The block cell the item sits in. The small lift keeps an item resting on the
+            // floor out of the block below it.
+            int bx = (int) Math.floor(item.getX());
+            int by = (int) Math.floor(item.getY() + 0.01);
+            int bz = (int) Math.floor(item.getZ());
+
+            // Two nested outlines read thicker than one 1px line.
+            event.renderer.box(bx - 0.004, by - 0.004, bz - 0.004, bx + 1.004, by + 1.004, bz + 1.004,
+                none, line, ShapeMode.Lines, 0);
+            event.renderer.box(bx + 0.03, by + 0.03, bz + 0.03, bx + 0.97, by + 0.97, bz + 0.97,
+                none, line, ShapeMode.Lines, 0);
         }
     }
 
@@ -809,8 +838,15 @@ public class NetheriteFinderPlus extends Module {
         if (gone != null) debris.removeAll(gone);
     }
 
-    /** Tracer origin a little in front of the camera, from yaw and pitch. */
+    /**
+     * Tracer origin: the crosshair. Meteor refreshes RenderUtils.center every frame from the
+     * real camera, so lines start exactly there and do not slide while you move or turn.
+     */
     private double[] tracerStart() {
+        var center = RenderUtils.center;
+        if (center != null) return new double[]{center.x, center.y, center.z};
+
+        // Fallback before the first frame: slightly in front of the eyes.
         double yaw = Math.toRadians(mc.player.getYaw());
         double pitch = Math.toRadians(mc.player.getPitch());
         double cosPitch = Math.cos(pitch);
