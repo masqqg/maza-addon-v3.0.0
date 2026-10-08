@@ -19,6 +19,7 @@ import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -163,6 +164,11 @@ public class SusChunkFinder extends Module {
     private final Setting<Boolean> relaxEmpty = general.add(new BoolSetting.Builder()
         .name("relax-empty-chunks")
         .description("Chunks with no blocks between Y -16 and 30 only need 1 heat.")
+        .defaultValue(true).build());
+
+    private final Setting<Boolean> keepFlagged = general.add(new BoolSetting.Builder()
+        .name("keep-flagged")
+        .description("Once a chunk was flagged it stays marked, even when you walk up to it and a rescan changes its score. Cleared when you change world or detection settings.")
         .defaultValue(true).build());
 
     private final Setting<Boolean> hottestOnly = general.add(new BoolSetting.Builder()
@@ -408,6 +414,7 @@ public class SusChunkFinder extends Module {
     private final Set<Long> restored = new HashSet<>();                  // scores loaded from disk, still to be verified
     private final Map<Long, List<BlockPos>> deepslate = new HashMap<>(); // buried rotated deepslate per chunk
     private final Map<Long, Integer> flagged = new HashMap<>();          // chunks that are drawn
+    private final Map<Long, Integer> sticky = new HashMap<>();           // chunks that were flagged once (keep-flagged)
     private final Map<Long, Integer> peaks = new HashMap<>();            // hottest chunk of every patch
     private final List<Marker> markers = new ArrayList<>();
     private final Set<Long> announced = new HashSet<>();
@@ -1226,6 +1233,19 @@ public class SusChunkFinder extends Module {
                 }
             }
 
+            if (keepFlagged.get() && dim.has("sticky") && dim.get("sticky").isJsonObject()) {
+                for (Map.Entry<String, JsonElement> e : dim.getAsJsonObject("sticky").entrySet()) {
+                    try {
+                        String[] parts = e.getKey().split(",");
+                        long key = ChunkPos.toLong(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+                        sticky.put(key, e.getValue().getAsInt());
+                        dirty = true;
+                    } catch (RuntimeException ignored) {
+                        // skip a broken entry
+                    }
+                }
+            }
+
             if (debug.get()) info("Restored %d saved chunk scores", count);
         } catch (RuntimeException ignored) {
             // corrupt file section: start clean
@@ -1254,6 +1274,13 @@ public class SusChunkFinder extends Module {
         JsonObject dim = new JsonObject();
         dim.addProperty("sig", appliedSignature);
         dim.add("chunks", chunks);
+
+        JsonObject marks = new JsonObject();
+        for (Map.Entry<Long, Integer> e : sticky.entrySet()) {
+            ChunkPos cp = new ChunkPos(e.getKey());
+            marks.addProperty(cp.x + "," + cp.z, e.getValue());
+        }
+        dim.add("sticky", marks);
 
         if (saveRoot == null) saveRoot = new JsonObject();
         saveRoot.add(activeSaveKey, dim);
@@ -1435,6 +1462,15 @@ public class SusChunkFinder extends Module {
 
         flagged.clear();
         flagged.putAll(hottestOnly.get() ? peaks : candidates);
+
+        // A flagged chunk stays flagged: walking up to it brings new light data, neighbours
+        // and natural geodes into the picture, which must not wipe a mark that was seen.
+        if (keepFlagged.get()) {
+            for (Map.Entry<Long, Integer> e : flagged.entrySet()) sticky.merge(e.getKey(), e.getValue(), Math::max);
+            for (Map.Entry<Long, Integer> e : sticky.entrySet()) flagged.putIfAbsent(e.getKey(), e.getValue());
+        } else if (!sticky.isEmpty()) {
+            sticky.clear();
+        }
 
         if (notify.get()) {
             for (Marker m : markers) {
@@ -1781,6 +1817,10 @@ public class SusChunkFinder extends Module {
 
     /** Tracer origin slightly in front of the camera, built from yaw/pitch so it needs no version specific vector call. */
     private double[] tracerStart() {
+        // Meteor refreshes RenderUtils.center every frame from the real camera: no sliding.
+        var center = RenderUtils.center;
+        if (center != null) return new double[]{center.x, center.y, center.z};
+
         double yaw = Math.toRadians(mc.player.getYaw());
         double pitch = Math.toRadians(mc.player.getPitch());
         double cosPitch = Math.cos(pitch);
@@ -1888,6 +1928,7 @@ public class SusChunkFinder extends Module {
         lightTriggered.clear();
         emitters.clear();
         eventLog.clear();
+        sticky.clear();
         cooldown.clear();
         restored.clear();
         deepslate.clear();
