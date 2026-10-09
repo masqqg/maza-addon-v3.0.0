@@ -4,6 +4,7 @@ import com.maza.addon.modules.AntiVanish;
 import com.maza.addon.modules.NetheriteFinderPlus;
 import com.maza.addon.modules.PlayerBypass;
 import com.maza.addon.modules.PrimeChunkFinder;
+import com.maza.addon.modules.RegionMapModule;
 import com.maza.addon.modules.SpawnerFlag;
 import com.maza.addon.modules.StorageESP;
 import com.maza.addon.modules.SusChunkFinder;
@@ -31,6 +32,7 @@ public class Addon extends MeteorAddon {
         modules.add(new AntiVanish());
         modules.add(new PlayerBypass());
         modules.add(new SpawnerFlag());
+        modules.add(new RegionMapModule());
     }
 
     @Override
