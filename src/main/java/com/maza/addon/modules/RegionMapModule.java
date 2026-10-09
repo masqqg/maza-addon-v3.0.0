@@ -6,7 +6,7 @@ import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingColor;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
@@ -65,7 +65,7 @@ public class RegionMapModule extends Module {
                     Renderer2D.COLOR.quad(x2 - 0.7, y1, x2, y2, borderColor.get());
                 }
             }
-            Renderer2D.COLOR.render(null);
+            Renderer2D.COLOR.render();
         }
 
         if (showPlayer.get()) {
@@ -78,7 +78,7 @@ public class RegionMapModule extends Module {
             Renderer2D.COLOR.begin();
             Renderer2D.COLOR.quad(cx - r, cy - 1, cx + r, cy + 1, playerColor.get());
             Renderer2D.COLOR.quad(cx - 1, cy - r, cx + 1, cy + r, playerColor.get());
-            Renderer2D.COLOR.render(null);
+            Renderer2D.COLOR.render();
         }
     }
 }
