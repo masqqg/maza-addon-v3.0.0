@@ -147,12 +147,12 @@ public class NetheriteFinderPlus extends Module {
     private final Setting<Integer> blockRange = blockGroup.add(new IntSetting.Builder()
         .name("block-range")
         .description("Only blocks this close to you are drawn.")
-        .defaultValue(24).min(4).sliderMax(64).build());
+        .defaultValue(40).min(4).sliderMax(64).build());
 
     private final Setting<Integer> maxBlocks = blockGroup.add(new IntSetting.Builder()
         .name("max-blocks")
         .description("Max blocks drawn at once (nearest first).")
-        .defaultValue(400).min(1).sliderMax(2000).build());
+        .defaultValue(600).min(1).sliderMax(2000).build());
 
     private final Setting<SettingColor> lineColor = blockGroup.add(new ColorSetting.Builder()
         .name("line-color")
@@ -167,7 +167,7 @@ public class NetheriteFinderPlus extends Module {
     private final Setting<Integer> maxInferred = blockGroup.add(new IntSetting.Builder()
         .name("max-inferred")
         .description("Max yellow blocks drawn at once (nearest first).")
-        .defaultValue(60).min(1).sliderMax(500).build());
+        .defaultValue(150).min(1).sliderMax(500).build());
 
     private final Setting<Integer> inferredMinY = blockGroup.add(new IntSetting.Builder()
         .name("inferred-min-y")
@@ -176,13 +176,13 @@ public class NetheriteFinderPlus extends Module {
 
     private final Setting<Integer> inferredMaxY = blockGroup.add(new IntSetting.Builder()
         .name("inferred-max-y")
-        .description("Highest Y for yellow blocks. Large ancient debris veins stop around Y 24.")
-        .defaultValue(24).min(0).max(127).sliderMin(0).sliderMax(127).build());
+        .description("Highest Y for yellow blocks. Small scattered debris generates up to Y 119, large veins around Y 8-24.")
+        .defaultValue(119).min(0).max(127).sliderMin(0).sliderMax(127).build());
 
     private final Setting<Integer> inferredSpacing = blockGroup.add(new IntSetting.Builder()
         .name("inferred-spacing")
         .description("Min distance in blocks between two yellow blocks, so one open region gets a few marks instead of hundreds. 1 = no thinning.")
-        .defaultValue(3).min(1).max(8).sliderMin(1).sliderMax(8).build());
+        .defaultValue(2).min(1).max(8).sliderMin(1).sliderMax(8).build());
 
     private final Setting<SettingColor> inferredSide = blockGroup.add(new ColorSetting.Builder()
         .name("inferred-side-color")
