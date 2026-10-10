@@ -1,5 +1,6 @@
 package com.maza.addon;
 
+import com.maza.addon.hud.RegionMapHud;
 import com.maza.addon.modules.AntiVanish;
 import com.maza.addon.modules.NetheriteFinderPlus;
 import com.maza.addon.modules.PlayerBypass;
@@ -9,6 +10,7 @@ import com.maza.addon.modules.SpawnerFlag;
 import com.maza.addon.modules.StorageESP;
 import com.maza.addon.modules.SusChunkFinder;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
+import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
@@ -33,6 +35,8 @@ public class Addon extends MeteorAddon {
         modules.add(new PlayerBypass());
         modules.add(new SpawnerFlag());
         modules.add(new RegionMapModule());
+
+        Hud.get().register(RegionMapHud.INFO);
     }
 
     @Override
