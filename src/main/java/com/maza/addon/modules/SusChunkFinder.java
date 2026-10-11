@@ -94,7 +94,7 @@ import java.util.concurrent.CompletableFuture;
  *    patch is kept, and geodes get a small marker at their centre. No text is drawn.
  */
 public class SusChunkFinder extends Module {
-    public enum Method { Classic, Light, Both }
+    public enum Method { Classic, Light, Both, All }
     public enum PaletteMode { Auto, On, Off }
 
     private static final int LIGHT_DELAY_TICKS = 8;     // light follows chunk data
@@ -134,8 +134,8 @@ public class SusChunkFinder extends Module {
     // ---- general
     private final Setting<Method> method = general.add(new EnumSetting.Builder<Method>()
         .name("method")
-        .description("Classic reads blocks, Light reads light data (works through hidden blocks), Both uses the stronger result.")
-        .defaultValue(Method.Both).build());
+        .description("All runs Classic block scanning, Light-data scanning, plant clocks, geode analysis and live activity together.")
+        .defaultValue(Method.All).build());
 
     private final Setting<PaletteMode> paletteMode = general.add(new EnumSetting.Builder<PaletteMode>()
         .name("palette-mode")
@@ -155,7 +155,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> spreadRadius = general.add(new IntSetting.Builder()
         .name("spread-radius")
         .description("How far (in chunks) the heat of a chunk spreads.")
-        .defaultValue(5).min(1).max(16).sliderMin(1).sliderMax(16).build());
+        .defaultValue(0).min(0).max(16).sliderMin(0).sliderMax(16).build());
 
     private final Setting<Integer> vetoRadius = general.add(new IntSetting.Builder()
         .name("veto-radius")
@@ -174,13 +174,13 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Boolean> keepFlagged = general.add(new BoolSetting.Builder()
         .name("keep-flagged")
-        .description("Once a chunk was flagged it stays marked, even when you walk up to it and a rescan changes its score. Cleared when you change world or detection settings.")
-        .defaultValue(true).build());
+        .description("Keep old chunk marks. Turn off to avoid accumulating stale marks.")
+        .defaultValue(false).build());
 
     private final Setting<Boolean> hottestOnly = general.add(new BoolSetting.Builder()
         .name("hottest-only")
         .description("Draw only the hottest chunk of each patch instead of the whole patch.")
-        .defaultValue(false).build());
+        .defaultValue(true).build());
 
     private final Setting<Boolean> notify = general.add(new BoolSetting.Builder()
         .name("notify")
@@ -511,7 +511,7 @@ public class SusChunkFinder extends Module {
         if (!inScanRange(pos.x, pos.z)) return;
 
         // Light is applied by the light engine after the chunk itself.
-        schedule(ChunkPos.toLong(pos.x, pos.z), method.get() == Method.Classic ? 1 : LIGHT_DELAY_TICKS);
+        schedule(ChunkPos.toLong(pos.x, pos.z), LIGHT_DELAY_TICKS);
     }
 
     @EventHandler
@@ -532,8 +532,6 @@ public class SusChunkFinder extends Module {
             if (!touched.isEmpty()) mc.execute(() -> { for (long key : touched) blockTouched(key); });
             return;
         }
-
-        if (method.get() == Method.Classic) return;
 
         if (event.packet instanceof LightUpdateS2CPacket light) {
             int cx = light.getChunkX();
@@ -557,7 +555,7 @@ public class SusChunkFinder extends Module {
         int cz = event.pos.getZ() >> 4;
         if (!inScanRange(cx, cz)) return;
 
-        schedule(ChunkPos.toLong(cx, cz), method.get() == Method.Classic ? 1 : LIGHT_DELAY_TICKS);
+        schedule(ChunkPos.toLong(cx, cz), LIGHT_DELAY_TICKS);
     }
 
     // --------------------------------------------------------------- scheduling
@@ -594,7 +592,7 @@ public class SusChunkFinder extends Module {
                 if (pending.containsKey(key) || readySet.contains(key)) continue;
                 if (!loaded(x, z)) continue;
                 if (retry) cooldown.remove(key);
-                schedule(key, method.get() == Method.Classic ? 0 : 2);
+                schedule(key, 2);
             }
         }
     }
@@ -1576,23 +1574,26 @@ public class SusChunkFinder extends Module {
         return count;
     }
 
-    /** Connected patches (4-neighbour). Keeps every chunk that ties the patch maximum. */
-    private static Map<Long, Integer> hottestPerPatch(Map<Long, Integer> chunks) {
+    /** Connected patches (4-neighbour). Keeps exactly one hottest chunk per patch. */
+    private Map<Long, Integer> hottestPerPatch(Map<Long, Integer> chunks) {
         Map<Long, Integer> out = new HashMap<>();
         Set<Long> seen = new HashSet<>();
 
         for (long start : chunks.keySet()) {
             if (!seen.add(start)) continue;
 
-            List<Long> patch = new ArrayList<>();
             ArrayDeque<Long> open = new ArrayDeque<>();
             open.add(start);
-            int best = 0;
+            long bestKey = start;
+            int best = chunks.get(start);
 
             while (!open.isEmpty()) {
                 long current = open.poll();
-                patch.add(current);
-                best = Math.max(best, chunks.get(current));
+                int value = chunks.get(current);
+                if (value > best || (value == best && chunkDistSq(current) < chunkDistSq(bestKey))) {
+                    best = value;
+                    bestKey = current;
+                }
 
                 ChunkPos c = new ChunkPos(current);
                 long[] next = {
@@ -1604,9 +1605,7 @@ public class SusChunkFinder extends Module {
                 }
             }
 
-            for (long key : patch) {
-                if (chunks.get(key) == best) out.put(key, best);
-            }
+            out.put(bestKey, best);
         }
 
         return out;
