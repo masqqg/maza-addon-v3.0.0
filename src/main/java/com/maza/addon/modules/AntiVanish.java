@@ -68,15 +68,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * false alarms on the first three methods.
  */
 public class AntiVanish extends Module {
-    private static final int W_SPAWN = 3;
-    private static final int W_REMOVED = 3;
-    private static final int W_ABSENT = 3;
-    private static final int W_SPECTATOR = 2;
-    private static final int W_UNLISTED = 3;
-    private static final int W_FLICKER = 2;
-    private static final int W_INVISIBLE = 1;
-    private static final int W_LAG = 1;
-    private static final int W_CORRELATED = 1;
+    // Screenshot-inspired evidence weights. These are heuristics, not proof.
+    private static final int W_SPAWN = 100;
+    private static final int W_REMOVED = 100;
+    private static final int W_ABSENT = 35;
+    private static final int W_SPECTATOR = 100;
+    private static final int W_UNLISTED = 100;
+    private static final int W_FLICKER = 30;
+    private static final int W_INVISIBLE = 35;
+    private static final int W_LAG = 0;
+    private static final int W_CORRELATED = 0;
 
     private final SettingGroup general = settings.getDefaultGroup();
     private final SettingGroup detection = settings.createGroup("Detection");
@@ -140,14 +141,22 @@ public class AntiVanish extends Module {
         .name("signal-window-seconds").description("How long light/entity signals remain relevant after a TAB removal.")
         .defaultValue(20).min(5).max(30).sliderMax(30).build());
 
+    private final Setting<Integer> goliathCellSize = general.add(new IntSetting.Builder()
+        .name("goliath-cell-size").description("Approximate Goliath grid cell width in blocks.")
+        .defaultValue(12500).min(1000).max(30000).sliderMax(30000).build());
+
+    private final Setting<Boolean> goliathFusion = detection.add(new BoolSetting.Builder()
+        .name("goliath-fusion").description("Require two distinct signal categories before alerting.")
+        .defaultValue(true).build());
+
     private final Setting<Integer> minScore = scoring.add(new IntSetting.Builder()
         .name("min-score")
         .description("Weights of one player that have to add up before an alert. 3 = one strong signal or three weak ones.")
-        .defaultValue(3).min(1).max(12).sliderMin(1).sliderMax(12).build());
+        .defaultValue(35).min(1).max(100).sliderMin(1).sliderMax(100).build());
 
     private final Setting<Integer> holdSeconds = scoring.add(new IntSetting.Builder()
         .name("score-window-seconds").description("Signals older than this no longer count.")
-        .defaultValue(60).min(10).max(600).sliderMin(10).sliderMax(600).build());
+        .defaultValue(15).min(5).max(600).sliderMin(5).sliderMax(600).build());
 
     private final Setting<Boolean> notify = alerts.add(new BoolSetting.Builder()
         .name("notify").description("Chat message on alert.").defaultValue(true).build());
@@ -188,9 +197,12 @@ public class AntiVanish extends Module {
     private long lastNearbyLightAt;
     private long lastNearbyEntityDataAt;
     private long lastSignalAlertAt;
+    private int lastGoliathX = Integer.MIN_VALUE;
+    private int lastGoliathZ = Integer.MIN_VALUE;
+    private final Map<UUID, Set<String>> recentSenseTypes = new HashMap<>();
 
     public AntiVanish() {
-        super(MazaCategory.INSTANCE, "anti-vanish", "Flags possible vanish-related signals; signals are not proof of staff presence.");
+        super(MazaCategory.INSTANCE, "anti-vanish", "Combines TAB, entity and spectator clues into a timed AntiVanish alert.");
     }
 
     @Override
@@ -227,6 +239,9 @@ public class AntiVanish extends Module {
         lastNearbyLightAt = 0L;
         lastNearbyEntityDataAt = 0L;
         lastSignalAlertAt = 0L;
+        lastGoliathX = Integer.MIN_VALUE;
+        lastGoliathZ = Integer.MIN_VALUE;
+        recentSenseTypes.clear();
     }
 
     // ------------------------------------------------------------------- tick
@@ -237,6 +252,19 @@ public class AntiVanish extends Module {
 
         tick++;
         long now = System.currentTimeMillis();
+
+        // Approximate Goliath cell tracking. This is a grid estimate, not a server-verified map.
+        int gx = Math.floorDiv(mc.player.getBlockX(), goliathCellSize.get());
+        int gz = Math.floorDiv(mc.player.getBlockZ(), goliathCellSize.get());
+        if (lastGoliathX != Integer.MIN_VALUE && (gx != lastGoliathX || gz != lastGoliathZ)) {
+            signals.clear();
+            recentSenseTypes.clear();
+            flagged.clear();
+            missingTicks.clear();
+            info("Goliath cell changed (%d, %d) -> (%d, %d); previous evidence cleared.", lastGoliathX, lastGoliathZ, gx, gz);
+        }
+        lastGoliathX = gx;
+        lastGoliathZ = gz;
 
         if (lastTickAt != 0L) {
             long gap = now - lastTickAt;
@@ -568,6 +596,7 @@ public class AntiVanish extends Module {
 
     /** Add one signal to a player. The alert fires when the weights inside the window reach the minimum. */
     private void signal(UUID id, int weight, String reason) {
+        if (weight <= 0) return;
         long now = System.currentTimeMillis();
         List<Signal> list = signals.computeIfAbsent(id, k -> new ArrayList<>());
 
@@ -582,17 +611,33 @@ public class AntiVanish extends Module {
         list.removeIf(s -> s.at() < cutoff);
 
         int score = 0;
-        for (Signal s : list) score += s.weight();
-        if (score >= minScore.get()) alert(id, score, list);
+        Set<String> types = new HashSet<>();
+        for (Signal s : list) {
+            score += s.weight();
+            types.add(senseType(s.reason()));
+        }
+        recentSenseTypes.put(id, types);
+        boolean enoughSenses = !goliathFusion.get() || types.size() >= 2;
+        if (score >= minScore.get() && enoughSenses) alert(id, score, list);
+    }
+
+    private String senseType(String reason) {
+        String r = reason.toLowerCase();
+        if (r.contains("spectator") || r.contains("unlisted") || r.contains("tab")) return "TAB";
+        if (r.contains("invisible")) return "BODY";
+        if (r.contains("particle")) return "PARTICLE";
+        if (r.contains("sound")) return "SOUND";
+        if (r.contains("spawn") || r.contains("flicker") || r.contains("entity")) return "ENTITY";
+        return "OTHER";
     }
 
     private void alert(UUID id, int score, List<Signal> list) {
         long now = System.currentTimeMillis();
         Long last = alertedAt.get(id);
-        if (last != null && now - last < 5000L) return;
+        if (last != null && now - last < 12_000L) return;
 
         alertedAt.put(id, now);
-        flagged.put(id, now + 10_000L);
+        flagged.put(id, now + 7_000L);
         maybeResolve(id);
 
         if (!notify.get()) return;
@@ -603,6 +648,6 @@ public class AntiVanish extends Module {
             reasons.append(s.reason());
         }
 
-        info("Possible vanish/staff signal: %s, UUID %s, score %d (%s)", nameOf(id), id, score, reasons);
+        info("WATCHING YOU: %s | score %d | Goliath %d,%d | %s", nameOf(id), score, lastGoliathX, lastGoliathZ, reasons);
     }
 }
