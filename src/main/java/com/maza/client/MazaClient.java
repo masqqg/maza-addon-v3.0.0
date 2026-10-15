@@ -6,6 +6,7 @@ import com.maza.client.module.ModuleManager;
 import com.maza.client.module.modules.client.ClickGUI;
 import com.maza.client.module.modules.client.HUD;
 import com.maza.client.module.modules.misc.AntiVanish;
+import com.maza.client.module.modules.render.RegionMapModule;
 import com.maza.client.module.modules.render.StorageESP;
 import com.maza.client.module.modules.world.NetheriteFinderPlus;
 import com.maza.client.module.modules.world.PlayerBypass;
@@ -41,6 +42,7 @@ public class MazaClient implements ClientModInitializer {
 
             // Render
             new StorageESP(),
+            new RegionMapModule(),
 
             // World
             new PlayerBypass(),
