@@ -1,26 +1,19 @@
-package com.maza.addon.modules;
+package com.maza.client.module.modules.world;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.maza.addon.MazaCategory;
-import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.ColorSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.RenderUtils;
-import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import meteordevelopment.orbit.EventHandler;
+import com.maza.client.event.EventHandler;
+import com.maza.client.event.PacketEvent;
+import com.maza.client.event.Render3DEvent;
+import com.maza.client.event.TickEvent;
+import com.maza.client.module.Category;
+import com.maza.client.module.Module;
+import com.maza.client.setting.*;
+import com.maza.client.utils.ChatUtils;
+import com.maza.client.utils.Render3DUtils;
+import com.maza.client.utils.ShapeMode;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
@@ -33,61 +26,29 @@ import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.passive.AnimalEntity;
 import net.minecraft.entity.passive.VillagerEntity;
+import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlaySoundS2CPacket;
 import net.minecraft.registry.Registries;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.LightType;
+import net.minecraft.world.World;
 import net.minecraft.world.chunk.ChunkNibbleArray;
 import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.world.World;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Prime Chunk Finder
- *
- * A chunk is flagged when enough independent methods point at it. Nothing is sent to the
- * server, every method reads data the client already has.
- *
- *  Sound:      pistons, observers, redstone, dispensers, and optionally chests/doors,
- *              several times inside a short window (live, fades out).
- *  Mask:       a server that hides part of a base can fill what it does not send with
- *              deepslate. Natural deepslate stops around Y 8, so a section far above that
- *              which is largely deepslate is a mask.
- *  Census:     blocks that only players place (hoppers, observers, pistons, beacons, shulker
- *              boxes, concrete, storage blocks, rotated deepslate), weighted and summed.
- *  Storage:    block entities that hold things (chests, barrels, hoppers, furnaces, ...).
- *  Entities:   item frames, armor stands, villagers, crowded animal pens (live).
- *  Palette:    the block palette of a section lists every block type in it, even when the
- *              server hides the blocks. Several player-only categories in one section
- *              (planks, concrete, glass, wool, redstone parts, storage, workstations, metal
- *              blocks) point at a build. Works where the block scan is blind.
- *  Edge:       deepslate fill that touches player blocks: the border of a masked base.
- *  Light:      a sky-light array under the surface that exists but is all zero was sealed
- *              off after it once had light: a built or dug-out space.
- *  Activity:   light updates for chunks far from you (live, fades out).
- *
- * Flagged chunks that touch each other are grouped, and every group gets one outline around
- * all of it, so a base that is only partly visible still shows its likely extent.
- *
- * Mask, census and storage are saved per server and dimension, so they survive a relog.
+ * Prime Chunk Finder - Standalone Fabric
  */
 public class PrimeChunkFinder extends Module {
     private static final int SOUND = 1;
@@ -101,220 +62,157 @@ public class PrimeChunkFinder extends Module {
     private static final int ACTIVITY = 256;
     private static final int STATIC_BITS = MASK | CENSUS | STORAGE | PALETTE | EDGE | LIGHT;
 
-    private static final int LIGHT_SETTLE_TICKS = 6;   // let the light engine apply the packet first
+    private static final int LIGHT_SETTLE_TICKS = 6;
     private static final int LIGHT_SCANS_PER_TICK = 4;
     private static final int GROUP_INTERVAL = 10;
 
     private static final int SCANS_PER_TICK = 2;
     private static final int ENTITY_INTERVAL = 40;
     private static final int SAVE_DELAY_TICKS = 100;
-    private static final Path SAVE_FILE = FabricLoader.getInstance().getGameDir()
-        .resolve("meteor-client").resolve("maza-prime-chunks.json");
+    private static final Path SAVE_FILE = FabricLoader.getInstance().getConfigDir()
+        .resolve("maza").resolve("maza-prime-chunks.json");
 
-    private final SettingGroup general = settings.getDefaultGroup();
-    private final SettingGroup soundGroup = settings.createGroup("Sound");
-    private final SettingGroup maskGroup = settings.createGroup("Deepslate Mask");
-    private final SettingGroup censusGroup = settings.createGroup("Block Census");
-    private final SettingGroup storageGroup = settings.createGroup("Storage");
-    private final SettingGroup entityGroup = settings.createGroup("Entities");
-    private final SettingGroup paletteGroup = settings.createGroup("Palette Leak");
-    private final SettingGroup lightGroup = settings.createGroup("Light Signature");
-    private final SettingGroup activityGroup = settings.createGroup("Light Activity");
-    private final SettingGroup render = settings.createGroup("Render");
+    // Settings
+    public final IntSetting range = addSetting(new IntSetting.Builder()
+        .name("range").defaultValue(16).min(1).sliderMax(32).build());
 
-    // ---- general
-    private final Setting<Integer> range = general.add(new IntSetting.Builder()
-        .name("range").description("Chunks around you that are looked at and drawn.")
-        .defaultValue(16).min(1).sliderMax(32).build());
+    public final IntSetting minMethods = addSetting(new IntSetting.Builder()
+        .name("min-methods").defaultValue(1).min(1).max(9).sliderMin(1).sliderMax(9).build());
 
-    private final Setting<Integer> minMethods = general.add(new IntSetting.Builder()
-        .name("min-methods")
-        .description("Different methods that have to agree before a chunk is flagged. 1 = any single method.")
-        .defaultValue(1).min(1).max(9).sliderMin(1).sliderMax(9).build());
+    public final BoolSetting notify = addSetting(new BoolSetting.Builder()
+        .name("notify").defaultValue(false).build());
 
-    private final Setting<Boolean> notify = general.add(new BoolSetting.Builder()
-        .name("notify").description("Chat message when a chunk gets flagged.").defaultValue(false).build());
-
-    // ---- sound
-    private final Setting<Boolean> soundOn = soundGroup.add(new BoolSetting.Builder()
+    public final BoolSetting soundOn = addSetting(new BoolSetting.Builder()
         .name("sound").defaultValue(true).build());
 
-    private final Setting<Integer> minSignals = soundGroup.add(new IntSetting.Builder()
-        .name("min-signals").description("Sounds inside the window before the chunk counts.")
-        .defaultValue(2).min(1).max(10).sliderMax(10).build());
+    public final IntSetting minSignals = addSetting(new IntSetting.Builder()
+        .name("min-signals").defaultValue(2).min(1).max(10).sliderMax(10).build());
 
-    private final Setting<Integer> windowMs = soundGroup.add(new IntSetting.Builder()
+    public final IntSetting windowMs = addSetting(new IntSetting.Builder()
         .name("signal-window-ms").defaultValue(2500).min(250).max(10000).sliderMax(10000).build());
 
-    private final Setting<Integer> soundHoldSeconds = soundGroup.add(new IntSetting.Builder()
-        .name("hold-seconds").description("How long a sound flag stays.")
-        .defaultValue(60).min(5).max(600).sliderMin(5).sliderMax(600).build());
+    public final IntSetting soundHoldSeconds = addSetting(new IntSetting.Builder()
+        .name("hold-seconds").defaultValue(60).min(5).max(600).sliderMin(5).sliderMax(600).build());
 
-    private final Setting<Boolean> piston = soundGroup.add(new BoolSetting.Builder()
+    public final BoolSetting piston = addSetting(new BoolSetting.Builder()
         .name("pistons").defaultValue(true).build());
 
-    private final Setting<Boolean> observer = soundGroup.add(new BoolSetting.Builder()
+    public final BoolSetting observer = addSetting(new BoolSetting.Builder()
         .name("observers").defaultValue(true).build());
 
-    private final Setting<Boolean> redstone = soundGroup.add(new BoolSetting.Builder()
+    public final BoolSetting redstone = addSetting(new BoolSetting.Builder()
         .name("redstone-sounds").defaultValue(true).build());
 
-    private final Setting<Boolean> storageSounds = soundGroup.add(new BoolSetting.Builder()
-        .name("storage-sounds").description("Chests, barrels, shulker boxes and ender chests opening and closing.")
-        .defaultValue(true).build());
+    public final BoolSetting storageSounds = addSetting(new BoolSetting.Builder()
+        .name("storage-sounds").defaultValue(true).build());
 
-    private final Setting<Boolean> doorSounds = soundGroup.add(new BoolSetting.Builder()
-        .name("door-sounds").description("Doors, trapdoors, gates, levers, buttons. Villages make these too.")
-        .defaultValue(false).build());
+    public final BoolSetting doorSounds = addSetting(new BoolSetting.Builder()
+        .name("door-sounds").defaultValue(false).build());
 
-    // ---- deepslate mask
-    private final Setting<Boolean> maskOn = maskGroup.add(new BoolSetting.Builder()
-        .name("deepslate-mask")
-        .description("Flag chunks with a section that is mostly deepslate far above where deepslate generates.")
-        .defaultValue(true).build());
+    public final BoolSetting maskOn = addSetting(new BoolSetting.Builder()
+        .name("deepslate-mask").defaultValue(true).build());
 
-    private final Setting<Integer> maskAboveY = maskGroup.add(new IntSetting.Builder()
-        .name("above-y").description("Only blocks at or above this height count. Natural deepslate ends around Y 8.")
-        .defaultValue(16).min(0).max(200).sliderMin(0).sliderMax(200).build());
+    public final IntSetting maskAboveY = addSetting(new IntSetting.Builder()
+        .name("above-y").defaultValue(16).min(0).max(200).sliderMin(0).sliderMax(200).build());
 
-    private final Setting<Integer> maskPercent = maskGroup.add(new IntSetting.Builder()
-        .name("min-percent").description("Share of a section that has to be deepslate.")
-        .defaultValue(35).min(5).max(100).sliderMin(5).sliderMax(100).build());
+    public final IntSetting maskPercent = addSetting(new IntSetting.Builder()
+        .name("min-percent").defaultValue(35).min(5).max(100).sliderMin(5).sliderMax(100).build());
 
-    private final Setting<Integer> maskSections = maskGroup.add(new IntSetting.Builder()
-        .name("min-sections").description("Sections of one chunk that have to look like a mask.")
-        .defaultValue(1).min(1).max(8).sliderMin(1).sliderMax(8).build());
+    public final IntSetting maskSections = addSetting(new IntSetting.Builder()
+        .name("min-sections").defaultValue(1).min(1).max(8).sliderMin(1).sliderMax(8).build());
 
-    private final Setting<Boolean> edgeOn = maskGroup.add(new BoolSetting.Builder()
-        .name("mask-edge")
-        .description("Deepslate fill touching player blocks: the border where a masked base starts.")
-        .defaultValue(true).build());
+    public final BoolSetting edgeOn = addSetting(new BoolSetting.Builder()
+        .name("mask-edge").defaultValue(true).build());
 
-    private final Setting<Integer> edgeMin = maskGroup.add(new IntSetting.Builder()
-        .name("edge-min-contacts").description("Deepslate blocks above the height that touch a player block.")
-        .defaultValue(4).min(1).max(100).sliderMin(1).sliderMax(50).build());
+    public final IntSetting edgeMin = addSetting(new IntSetting.Builder()
+        .name("edge-min-contacts").defaultValue(4).min(1).max(100).sliderMin(1).sliderMax(50).build());
 
-    // ---- census
-    private final Setting<Boolean> censusOn = censusGroup.add(new BoolSetting.Builder()
-        .name("block-census").description("Weighted count of blocks that only players place.")
-        .defaultValue(true).build());
+    public final BoolSetting censusOn = addSetting(new BoolSetting.Builder()
+        .name("block-census").defaultValue(true).build());
 
-    private final Setting<Integer> censusMin = censusGroup.add(new IntSetting.Builder()
-        .name("min-score").description("Census score a chunk needs.")
-        .defaultValue(14).min(1).max(400).sliderMin(1).sliderMax(100).build());
+    public final IntSetting censusMin = addSetting(new IntSetting.Builder()
+        .name("min-score").defaultValue(14).min(1).max(400).sliderMin(1).sliderMax(100).build());
 
-    // ---- storage
-    private final Setting<Boolean> storageOn = storageGroup.add(new BoolSetting.Builder()
-        .name("storage").description("Count chests, barrels, hoppers, furnaces and similar block entities.")
-        .defaultValue(true).build());
+    public final BoolSetting storageOn = addSetting(new BoolSetting.Builder()
+        .name("storage").defaultValue(true).build());
 
-    private final Setting<Integer> storageMin = storageGroup.add(new IntSetting.Builder()
-        .name("min-blocks").description("Storage block entities a chunk needs. Villages have a handful.")
-        .defaultValue(10).min(1).max(200).sliderMin(1).sliderMax(60).build());
+    public final IntSetting storageMin = addSetting(new IntSetting.Builder()
+        .name("min-blocks").defaultValue(10).min(1).max(200).sliderMin(1).sliderMax(60).build());
 
-    // ---- entities
-    private final Setting<Boolean> entityOn = entityGroup.add(new BoolSetting.Builder()
-        .name("entities").description("Item frames, armor stands, villagers and crowded pens.")
-        .defaultValue(true).build());
+    public final BoolSetting entityOn = addSetting(new BoolSetting.Builder()
+        .name("entities").defaultValue(true).build());
 
-    private final Setting<Integer> entityMin = entityGroup.add(new IntSetting.Builder()
-        .name("min-score").description("Entity score a chunk needs.")
-        .defaultValue(10).min(1).max(200).sliderMin(1).sliderMax(60).build());
+    public final IntSetting entityMin = addSetting(new IntSetting.Builder()
+        .name("min-score").defaultValue(10).min(1).max(200).sliderMin(1).sliderMax(60).build());
 
-    // ---- palette leak
-    private final Setting<Boolean> paletteOn = paletteGroup.add(new BoolSetting.Builder()
-        .name("palette-leak")
-        .description("Count player-only block categories in the palette of each section. Works when blocks are hidden.")
-        .defaultValue(true).build());
+    public final BoolSetting paletteOn = addSetting(new BoolSetting.Builder()
+        .name("palette-leak").defaultValue(true).build());
 
-    private final Setting<Integer> paletteCategories = paletteGroup.add(new IntSetting.Builder()
-        .name("min-categories")
-        .description("Categories one section needs: planks, concrete, glass, wool, redstone parts, storage, workstations, metal blocks. Villages reach 3 or 4.")
-        .defaultValue(4).min(2).max(8).sliderMin(2).sliderMax(8).build());
+    public final IntSetting paletteCategories = addSetting(new IntSetting.Builder()
+        .name("min-categories").defaultValue(4).min(2).max(8).sliderMin(2).sliderMax(8).build());
 
-    private final Setting<Integer> paletteSections = paletteGroup.add(new IntSetting.Builder()
-        .name("min-sections").description("Sections of one chunk that have to reach that.")
-        .defaultValue(2).min(1).max(12).sliderMin(1).sliderMax(12).build());
+    public final IntSetting paletteSections = addSetting(new IntSetting.Builder()
+        .name("min-sections").defaultValue(2).min(1).max(12).sliderMin(1).sliderMax(12).build());
 
-    // ---- light signature
-    private final Setting<Boolean> lightOn = lightGroup.add(new BoolSetting.Builder()
-        .name("light-signature")
-        .description("A sky-light array under the surface that exists but is all zero: a space that was sealed off.")
-        .defaultValue(true).build());
+    public final BoolSetting lightOn = addSetting(new BoolSetting.Builder()
+        .name("light-signature").defaultValue(true).build());
 
-    private final Setting<Integer> lightCeiling = lightGroup.add(new IntSetting.Builder()
-        .name("ceiling-y").description("Only sections that end below this height count.")
-        .defaultValue(62).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
+    public final IntSetting lightCeiling = addSetting(new IntSetting.Builder()
+        .name("ceiling-y").defaultValue(62).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
-    private final Setting<Integer> lightSections = lightGroup.add(new IntSetting.Builder()
-        .name("min-sealed-sections").description("Sealed sections a chunk needs.")
-        .defaultValue(1).min(1).max(12).sliderMin(1).sliderMax(12).build());
+    public final IntSetting lightSections = addSetting(new IntSetting.Builder()
+        .name("min-sealed-sections").defaultValue(1).min(1).max(12).sliderMin(1).sliderMax(12).build());
 
-    // ---- light activity
-    private final Setting<Boolean> activityOn = activityGroup.add(new BoolSetting.Builder()
-        .name("light-activity")
-        .description("Light updates for chunks far from you mean something changed there. Live, fades out.")
-        .defaultValue(true).build());
+    public final BoolSetting activityOn = addSetting(new BoolSetting.Builder()
+        .name("light-activity").defaultValue(true).build());
 
-    private final Setting<Integer> activityIgnore = activityGroup.add(new IntSetting.Builder()
-        .name("ignore-radius").description("Chunks around you that are ignored. 0 = your simulation distance.")
-        .defaultValue(0).min(0).max(32).sliderMin(0).sliderMax(32).build());
+    public final IntSetting activityIgnore = addSetting(new IntSetting.Builder()
+        .name("ignore-radius").defaultValue(0).min(0).max(32).sliderMin(0).sliderMax(32).build());
 
-    private final Setting<Integer> activityMin = activityGroup.add(new IntSetting.Builder()
-        .name("min-updates").description("Light updates inside the window.")
-        .defaultValue(3).min(1).max(30).sliderMin(1).sliderMax(30).build());
+    public final IntSetting activityMin = addSetting(new IntSetting.Builder()
+        .name("min-updates").defaultValue(3).min(1).max(30).sliderMin(1).sliderMax(30).build());
 
-    private final Setting<Integer> activityWindow = activityGroup.add(new IntSetting.Builder()
+    public final IntSetting activityWindow = addSetting(new IntSetting.Builder()
         .name("window-seconds").defaultValue(30).min(2).max(300).sliderMin(2).sliderMax(300).build());
 
-    private final Setting<Integer> activityHold = activityGroup.add(new IntSetting.Builder()
+    public final IntSetting activityHold = addSetting(new IntSetting.Builder()
         .name("hold-seconds").defaultValue(120).min(5).max(1800).sliderMin(5).sliderMax(1800).build());
 
-    private final Setting<Integer> activitySettle = activityGroup.add(new IntSetting.Builder()
-        .name("settle-seconds").description("Updates this soon after a chunk loaded are ignored.")
-        .defaultValue(3).min(0).max(30).sliderMin(0).sliderMax(30).build());
+    public final IntSetting activitySettle = addSetting(new IntSetting.Builder()
+        .name("settle-seconds").defaultValue(3).min(0).max(30).sliderMin(0).sliderMax(30).build());
 
-    // ---- render
-    private final Setting<Integer> renderY = render.add(new IntSetting.Builder()
+    public final IntSetting renderY = addSetting(new IntSetting.Builder()
         .name("render-y").defaultValue(64).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
-    private final Setting<Double> slabHeight = render.add(new DoubleSetting.Builder()
+    public final DoubleSetting slabHeight = addSetting(new DoubleSetting.Builder()
         .name("slab-height").defaultValue(1.0).min(0.1).max(8.0).sliderMin(0.1).sliderMax(8.0).build());
 
-    private final Setting<Integer> thickness = render.add(new IntSetting.Builder()
-        .name("outline-thickness").description("Lines are one pixel wide, so this draws that many nested outlines.")
-        .defaultValue(3).min(1).max(8).sliderMin(1).sliderMax(8).build());
+    public final IntSetting thickness = addSetting(new IntSetting.Builder()
+        .name("outline-thickness").defaultValue(3).min(1).max(8).sliderMin(1).sliderMax(8).build());
 
-    private final Setting<Boolean> tracers = render.add(new BoolSetting.Builder()
-        .name("tracers").description("Line from your crosshair to every flagged chunk.")
-        .defaultValue(false).build());
+    public final BoolSetting tracers = addSetting(new BoolSetting.Builder()
+        .name("tracers").defaultValue(false).build());
 
-    private final Setting<SettingColor> color = render.add(new ColorSetting.Builder()
-        .name("color").description("Chunks with one method.")
-        .defaultValue(new SettingColor(0, 255, 0, 230)).build());
+    public final ColorSetting color = addSetting(new ColorSetting.Builder()
+        .name("color").defaultValue(new SettingColor(0, 255, 0, 230)).build());
 
-    private final Setting<Boolean> showBounds = render.add(new BoolSetting.Builder()
-        .name("group-outline")
-        .description("One outline around every group of flagged chunks that touch each other: the likely extent of a base.")
-        .defaultValue(true).build());
+    public final BoolSetting showBounds = addSetting(new BoolSetting.Builder()
+        .name("group-outline").defaultValue(true).build());
 
-    private final Setting<Integer> linkRadius = render.add(new IntSetting.Builder()
-        .name("group-link-chunks").description("Flagged chunks this close to each other belong to one group.")
-        .defaultValue(3).min(1).max(10).sliderMin(1).sliderMax(10).build());
+    public final IntSetting linkRadius = addSetting(new IntSetting.Builder()
+        .name("group-link-chunks").defaultValue(3).min(1).max(10).sliderMin(1).sliderMax(10).build());
 
-    private final Setting<Integer> minGroup = render.add(new IntSetting.Builder()
-        .name("group-min-chunks").description("Flagged chunks a group needs before it gets an outline.")
-        .defaultValue(2).min(1).max(50).sliderMin(1).sliderMax(50).build());
+    public final IntSetting minGroup = addSetting(new IntSetting.Builder()
+        .name("group-min-chunks").defaultValue(2).min(1).max(50).sliderMin(1).sliderMax(50).build());
 
-    private final Setting<SettingColor> boundsColor = render.add(new ColorSetting.Builder()
+    public final ColorSetting boundsColor = addSetting(new ColorSetting.Builder()
         .name("group-color").defaultValue(new SettingColor(0, 220, 255, 230)).build());
 
-    private final Setting<SettingColor> strongColor = render.add(new ColorSetting.Builder()
-        .name("strong-color").description("Chunks that two or more methods agree on.")
-        .defaultValue(new SettingColor(255, 220, 0, 230)).build());
+    public final ColorSetting strongColor = addSetting(new ColorSetting.Builder()
+        .name("strong-color").defaultValue(new SettingColor(255, 220, 0, 230)).build());
 
-    // Only touched on the client thread.
-    private final Map<Long, Integer> staticHits = new HashMap<>();   // MASK | CENSUS | STORAGE, saved
+    // State
+    private final Map<Long, Integer> staticHits = new HashMap<>();
     private final Map<Long, Long> soundUntil = new HashMap<>();
     private final Map<Long, Long> entityUntil = new HashMap<>();
     private final Map<Long, Deque<Long>> signals = new HashMap<>();
@@ -324,11 +222,11 @@ public class PrimeChunkFinder extends Module {
     private final Set<Long> announced = new HashSet<>();
     private final IdentityHashMap<Block, Integer> weights = new IdentityHashMap<>();
     private final IdentityHashMap<Block, Integer> categories = new IdentityHashMap<>();
-    private final Map<Long, Integer> lightDue = new LinkedHashMap<>();           // chunk -> tick it may be scanned
+    private final Map<Long, Integer> lightDue = new LinkedHashMap<>();
     private final Map<Long, Long> loadedAt = new HashMap<>();
     private final Map<Long, Deque<Long>> activityTimes = new HashMap<>();
     private final Map<Long, Long> activityUntil = new HashMap<>();
-    private List<int[]> bounds = new ArrayList<>();                              // minX, minZ, maxX, maxZ, chunks
+    private List<int[]> bounds = new ArrayList<>();
 
     private JsonObject saveRoot;
     private String activeKey;
@@ -338,12 +236,11 @@ public class PrimeChunkFinder extends Module {
     private int tick;
 
     public PrimeChunkFinder() {
-        super(MazaCategory.INSTANCE, "prime-chunk-finder",
-            "Flags chunks that sound, look or hold like a base: redstone sounds, deepslate masks, player-only blocks, storage, entities.");
+        super("PrimeChunkFinder", "Flags chunks that sound, look or hold like a base", Category.WORLD);
     }
 
     @Override
-    public void onActivate() {
+    public void onEnable() {
         clearAll();
         lastWorld = null;
         activeKey = null;
@@ -351,7 +248,7 @@ public class PrimeChunkFinder extends Module {
     }
 
     @Override
-    public void onDeactivate() {
+    public void onDisable() {
         save(false);
         clearAll();
         lastWorld = null;
@@ -375,10 +272,8 @@ public class PrimeChunkFinder extends Module {
         dirty = false;
     }
 
-    // ------------------------------------------------------------------- events
-
     @EventHandler
-    private void onTick(TickEvent.Post event) {
+    public void onTick(TickEvent.Post event) {
         if (mc.world == null || mc.player == null) {
             if (activeKey != null) {
                 save(false);
@@ -390,7 +285,7 @@ public class PrimeChunkFinder extends Module {
         }
 
         if (mc.world != lastWorld) {
-            if (activeKey != null) save(false); // still the old world's key and data
+            if (activeKey != null) save(false);
             clearAll();
             lastWorld = mc.world;
             activeKey = saveKey();
@@ -418,20 +313,19 @@ public class PrimeChunkFinder extends Module {
     }
 
     @EventHandler
-    private void onChunkData(ChunkDataEvent event) {
-        if (mc.world == null || event.chunk() == null) return;
+    public void onPacket(PacketEvent.Receive event) {
+        if (event.packet instanceof ChunkDataS2CPacket chunkData) {
+            if (mc.world == null) return;
+            long key = ChunkPos.toLong(chunkData.getChunkX(), chunkData.getChunkZ());
+            loadedAt.put(key, System.currentTimeMillis());
+            activityTimes.remove(key);
+            activityUntil.remove(key);
 
-        long key = event.chunk().getPos().toLong();
-        loadedAt.put(key, System.currentTimeMillis());
-        activityTimes.remove(key);
-        activityUntil.remove(key);
+            enqueue(key);
+            scheduleLight(key);
+            return;
+        }
 
-        enqueue(key);
-        scheduleLight(key);
-    }
-
-    @EventHandler
-    private void onPacket(PacketEvent.Receive event) {
         if (event.packet instanceof LightUpdateS2CPacket light) {
             int cx = light.getChunkX();
             int cz = light.getChunkZ();
@@ -441,11 +335,10 @@ public class PrimeChunkFinder extends Module {
 
         if (!soundOn.get() || !(event.packet instanceof PlaySoundS2CPacket packet)) return;
 
-        // Network thread: pull the plain values out, the maps are only used on the client thread.
         double x = packet.getX();
         double z = packet.getZ();
         var soundId = Registries.SOUND_EVENT.getId(packet.getSound().value());
-        if (soundId == null) return; // custom or unregistered sound, nothing to match
+        if (soundId == null) return;
         String id = soundId.getPath();
 
         mc.execute(() -> handleSound(x, z, id));
@@ -459,7 +352,6 @@ public class PrimeChunkFinder extends Module {
         if (activityOn.get()) recordActivity(cx, cz, key);
     }
 
-    /** A light update for a chunk far from you: something changed there. */
     private void recordActivity(int cx, int cz, long key) {
         int ignore = activityIgnore.get() > 0 ? activityIgnore.get() : mc.options.getSimulationDistance().getValue();
         ChunkPos pc = mc.player.getChunkPos();
@@ -477,8 +369,6 @@ public class PrimeChunkFinder extends Module {
 
         if (times.size() >= activityMin.get()) activityUntil.put(key, now + activityHold.get() * 1000L);
     }
-
-    // ------------------------------------------------------------ light signature
 
     private void scheduleLight(long key) {
         if (lightOn.get()) lightDue.put(key, tick + LIGHT_SETTLE_TICKS);
@@ -501,7 +391,6 @@ public class PrimeChunkFinder extends Module {
         }
     }
 
-    /** Sky-light sections under the ceiling that exist but hold nothing but zeros. */
     private void scanLightSignature(long key) {
         ChunkPos cp = new ChunkPos(key);
         if (mc.world.getChunkManager().getWorldChunk(cp.x, cp.z) == null) return;
@@ -514,7 +403,7 @@ public class PrimeChunkFinder extends Module {
 
         for (int i = 0; i < count; i++) {
             int sectionY = bottom + i;
-            if (sectionY * 16 + 15 >= ceiling) break; // sections come bottom to top
+            if (sectionY * 16 + 15 >= ceiling) break;
 
             ChunkNibbleArray array = sky.getLightSection(ChunkSectionPos.from(cp.x, sectionY, cp.z));
             if (array == null || array.isUninitialized()) continue;
@@ -573,8 +462,6 @@ public class PrimeChunkFinder extends Module {
         if (q.size() >= minSignals.get()) soundUntil.put(key, now + soundHoldSeconds.get() * 1000L);
     }
 
-    // ----------------------------------------------------------------- scanning
-
     private void enqueue(long key) {
         if (!(maskOn.get() || censusOn.get() || storageOn.get() || paletteOn.get())) return;
         if (queued.add(key)) queue.add(key);
@@ -592,7 +479,6 @@ public class PrimeChunkFinder extends Module {
         }
     }
 
-    /** Mask, census and storage of one chunk. The result replaces what was known about it. */
     private void scanChunk(WorldChunk chunk) {
         long key = chunk.getPos().toLong();
         int mask = 0;
@@ -639,7 +525,6 @@ public class PrimeChunkFinder extends Module {
 
                             if (!wantCensus || state.isAir()) continue;
 
-                            // A deepslate block that is not on the Y axis was placed by a player.
                             if (state.isOf(Blocks.DEEPSLATE) && state.contains(net.minecraft.state.property.Properties.AXIS)
                                 && state.get(net.minecraft.state.property.Properties.AXIS) != Direction.Axis.Y) {
                                 if (rotated < 8) rotated++;
@@ -672,7 +557,7 @@ public class PrimeChunkFinder extends Module {
         }
 
         int before = staticHits.getOrDefault(key, 0);
-        mask |= before & LIGHT; // the light signature has its own, later scan
+        mask |= before & LIGHT;
         if (mask == 0) staticHits.remove(key);
         else staticHits.put(key, mask);
 
@@ -680,12 +565,11 @@ public class PrimeChunkFinder extends Module {
             markDirty();
             if (notify.get() && mask != 0 && before == 0 && announced.add(key)) {
                 ChunkPos cp = chunk.getPos();
-                info("Chunk %d, %d flagged (%s)", cp.x, cp.z, describe(mask));
+                ChatUtils.info(String.format("Chunk %d, %d flagged (%s)", cp.x, cp.z, describe(mask)));
             }
         }
     }
 
-    /** A neighbour inside the same section that only players place. */
     private boolean touchesPlayerBlock(ChunkSection section, int x, int y, int z) {
         for (Direction d : Direction.values()) {
             int nx = x + d.getOffsetX();
@@ -698,7 +582,8 @@ public class PrimeChunkFinder extends Module {
         return false;
     }
 
-    /** How many player-only categories the palette of a section lists. */
+    private static final int CATEGORY_COUNT = 8;
+
     private int categoriesIn(ChunkSection section) {
         int found = 0;
         for (int c = 0; c < CATEGORY_COUNT; c++) {
@@ -708,9 +593,6 @@ public class PrimeChunkFinder extends Module {
         return found;
     }
 
-    private static final int CATEGORY_COUNT = 8;
-
-    /** 0 planks, 1 concrete, 2 glass, 3 wool, 4 redstone parts, 5 storage, 6 workstations, 7 metal blocks, -1 none. */
     private int categoryOf(Block block) {
         Integer cached = categories.get(block);
         if (cached != null) return cached;
@@ -768,14 +650,13 @@ public class PrimeChunkFinder extends Module {
         return score;
     }
 
-    /** Entity score per chunk, refreshed every couple of seconds. */
     private void scanEntities() {
         Map<Long, Double> scores = new HashMap<>();
 
         for (Entity entity : mc.world.getEntities()) {
             double w;
             if (entity instanceof ItemFrameEntity || entity instanceof ArmorStandEntity || entity instanceof VillagerEntity) w = 1.0;
-            else if (entity instanceof AnimalEntity) w = 0.25; // a crowded pen, not a lone cow
+            else if (entity instanceof AnimalEntity) w = 0.25;
             else continue;
 
             long key = ChunkPos.toLong(entity.getBlockX() >> 4, entity.getBlockZ() >> 4);
@@ -788,7 +669,6 @@ public class PrimeChunkFinder extends Module {
         }
     }
 
-    /** Blocks that players place and nature does not, with how much each one counts. */
     private int weightOf(Block block) {
         Integer cached = weights.get(block);
         if (cached != null) return cached;
@@ -850,9 +730,6 @@ public class PrimeChunkFinder extends Module {
         lastSound.values().removeIf(t -> now - t > 10_000L);
     }
 
-    // ------------------------------------------------------------------- render
-
-    /** All methods that currently point at the chunk, limited to the ones that are switched on. */
     private int hitsOf(long key, long now) {
         int mask = staticHits.getOrDefault(key, 0);
         if (soundOn.get() && soundUntil.getOrDefault(key, 0L) > now) mask |= SOUND;
@@ -866,7 +743,7 @@ public class PrimeChunkFinder extends Module {
     }
 
     @EventHandler
-    private void onRender(Render3DEvent event) {
+    public void onRender(Render3DEvent event) {
         if (mc.player == null || mc.world == null) return;
         if (staticHits.isEmpty() && soundUntil.isEmpty() && entityUntil.isEmpty() && activityUntil.isEmpty()) return;
 
@@ -886,18 +763,17 @@ public class PrimeChunkFinder extends Module {
             ChunkPos cp = new ChunkPos(key);
             if (Math.max(Math.abs(cp.x - pc.x), Math.abs(cp.z - pc.z)) > max) continue;
 
-            draw(event, cp, hits >= 2 ? strongColor.get() : color.get());
+            draw(cp, hits >= 2 ? strongColor.get() : color.get());
         }
 
         if (showBounds.get()) {
             for (int[] b : bounds) {
                 if (b[2] < pc.x - max || b[0] > pc.x + max || b[3] < pc.z - max || b[1] > pc.z + max) continue;
-                drawBounds(event, b);
+                drawBounds(b);
             }
         }
     }
 
-    /** Groups of flagged chunks that touch each other, with the box around each group. */
     private void rebuildGroups() {
         if (mc.player == null || mc.world == null) {
             bounds = new ArrayList<>();
@@ -951,7 +827,7 @@ public class PrimeChunkFinder extends Module {
         bounds = result;
     }
 
-    private void drawBounds(Render3DEvent event, int[] b) {
+    private void drawBounds(int[] b) {
         SettingColor line = boundsColor.get();
         double x1 = b[0] * 16.0;
         double z1 = b[1] * 16.0;
@@ -959,16 +835,11 @@ public class PrimeChunkFinder extends Module {
         double z2 = (b[3] + 1) * 16.0;
         double y1 = renderY.get();
         double y2 = y1 + slabHeight.get() + 1.0;
-        Color none = new Color(0, 0, 0, 0);
 
-        int passes = thickness.get() + 1;
-        for (int k = 0; k < passes; k++) {
-            double g = (k - (passes - 1) / 2.0) * 0.06;
-            event.renderer.box(x1 - g, y1 - g, z1 - g, x2 + g, y2 + g, z2 + g, none, line, ShapeMode.Lines, 0);
-        }
+        Render3DUtils.drawBox(new Box(x1, y1, z1, x2, y2, z2), null, line, ShapeMode.Lines);
     }
 
-    private void draw(Render3DEvent event, ChunkPos cp, SettingColor line) {
+    private void draw(ChunkPos cp, SettingColor line) {
         double x1 = cp.getStartX();
         double z1 = cp.getStartZ();
         double x2 = x1 + 16.0;
@@ -976,23 +847,30 @@ public class PrimeChunkFinder extends Module {
         double y1 = renderY.get();
         double y2 = y1 + slabHeight.get();
 
-        Color fill = new Color(line.r, line.g, line.b, Math.max(20, line.a / 4));
-        Color none = new Color(0, 0, 0, 0);
+        SettingColor fill = new SettingColor(line.r, line.g, line.b, Math.max(20, line.a / 4));
+        Render3DUtils.drawBox(new Box(x1, y1, z1, x2, y2, z2), fill, line, ShapeMode.Both);
 
-        event.renderer.box(x1, y1, z1, x2, y2, z2, fill, none, ShapeMode.Sides, 0);
-
-        int passes = thickness.get();
-        for (int k = 0; k < passes; k++) {
-            double g = (k - (passes - 1) / 2.0) * 0.05;
-            event.renderer.box(x1 - g, y1 - g, z1 - g, x2 + g, y2 + g, z2 + g, none, line, ShapeMode.Lines, 0);
-        }
-
-        if (tracers.get() && RenderUtils.center != null) {
-            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, x1 + 8.0, y2, z1 + 8.0, line);
+        if (tracers.get() && mc.player != null) {
+            double[] start = tracerStart();
+            Vec3d s = new Vec3d(start[0], start[1], start[2]);
+            Render3DUtils.drawLine(s, new Vec3d(x1 + 8.0, y2, z1 + 8.0), line, 1.5f);
         }
     }
 
-    // -------------------------------------------------------------- persistence
+    private double[] tracerStart() {
+        if (mc.player == null) return new double[]{0, 0, 0};
+        double yaw = Math.toRadians(mc.player.getYaw());
+        double pitch = Math.toRadians(mc.player.getPitch());
+        double cosPitch = Math.cos(pitch);
+        double lx = -Math.sin(yaw) * cosPitch;
+        double ly = -Math.sin(pitch);
+        double lz = Math.cos(yaw) * cosPitch;
+        return new double[]{
+            mc.player.getX() + lx * 0.6,
+            mc.player.getEyeY() + ly * 0.6,
+            mc.player.getZ() + lz * 0.6
+        };
+    }
 
     private String saveKey() {
         var entry = mc.getCurrentServerEntry();
@@ -1027,13 +905,9 @@ public class PrimeChunkFinder extends Module {
                     long key = ChunkPos.toLong(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
                     int mask = e.getValue().getAsInt() & STATIC_BITS;
                     if (mask != 0) staticHits.put(key, mask);
-                } catch (RuntimeException ignored) {
-                    // skip a broken entry
-                }
+                } catch (RuntimeException ignored) {}
             }
-        } catch (RuntimeException ignored) {
-            // corrupt file section: start clean
-        }
+        } catch (RuntimeException ignored) {}
     }
 
     private void save(boolean async) {
@@ -1054,9 +928,7 @@ public class PrimeChunkFinder extends Module {
             try {
                 Files.createDirectories(SAVE_FILE.getParent());
                 Files.writeString(SAVE_FILE, json);
-            } catch (IOException ignored) {
-                // saving is best effort
-            }
+            } catch (IOException ignored) {}
         };
 
         if (async) CompletableFuture.runAsync(write);

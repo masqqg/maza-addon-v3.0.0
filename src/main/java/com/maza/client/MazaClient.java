@@ -8,6 +8,7 @@ import com.maza.client.module.modules.client.HUD;
 import com.maza.client.module.modules.misc.AntiVanish;
 import com.maza.client.module.modules.render.StorageESP;
 import com.maza.client.module.modules.world.PlayerBypass;
+import com.maza.client.module.modules.world.PrimeChunkFinder;
 import com.maza.client.module.modules.world.SpawnerFlag;
 import com.maza.client.module.modules.world.SusChunkFinder;
 import net.fabricmc.api.ClientModInitializer;
@@ -44,6 +45,7 @@ public class MazaClient implements ClientModInitializer {
             new PlayerBypass(),
             new SpawnerFlag(),
             new SusChunkFinder(),
+            new PrimeChunkFinder(),
 
             // Misc
             new AntiVanish()
