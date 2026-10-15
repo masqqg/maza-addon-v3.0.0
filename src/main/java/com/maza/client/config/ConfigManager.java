@@ -8,6 +8,7 @@ import com.google.gson.JsonParser;
 import com.maza.client.MazaClient;
 import com.maza.client.module.Module;
 import com.maza.client.module.ModuleManager;
+import com.maza.client.module.modules.client.NotificationManager;
 import com.maza.client.setting.*;
 import net.fabricmc.loader.api.FabricLoader;
 

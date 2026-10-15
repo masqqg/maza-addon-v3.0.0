@@ -33,10 +33,10 @@ public class CategoryFrame {
         MinecraftClient mc = MinecraftClient.getInstance();
 
         // Header
-        context.fill(x, y, x + width, y + height, 0xFF14141A);
+        context.fill(x, y, x + width, y + height, 0xEE14141A);
         context.fill(x, y + height - 2, x + width, y + height, 0xFF7C4DFF); // Accent line under header
 
-        String title = category.getName() + (open ? " §7[-]" : " §7[+]");
+        String title = "§d" + category.getName() + (open ? " §7[-]" : " §7[+]");
         context.drawTextWithShadow(mc.textRenderer, title, x + 5, y + 5, 0xFFFFFFFF);
 
         if (open) {

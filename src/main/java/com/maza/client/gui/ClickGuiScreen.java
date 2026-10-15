@@ -15,10 +15,10 @@ public class ClickGuiScreen extends Screen {
 
     static {
         int startX = 20;
-        int frameWidth = 115;
+        int frameWidth = 120;
         for (Category category : Category.values()) {
             FRAMES.add(new CategoryFrame(category, startX, 25, frameWidth));
-            startX += frameWidth + 15;
+            startX += frameWidth + 12;
         }
     }
 
@@ -29,7 +29,13 @@ public class ClickGuiScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         // Draw slight background darkening
-        context.fill(0, 0, width, height, 0x55000000);
+        context.fill(0, 0, width, height, 0x66000000);
+
+        // Header info bar
+        String header = "§dMaza Client §7v3.0.0 | §fPress ESC to exit";
+        context.fill(0, 0, width, 16, 0xDD101015);
+        context.fill(0, 15, width, 16, 0xFF7C4DFF);
+        context.drawTextWithShadow(textRenderer, header, 8, 4, 0xFFFFFFFF);
 
         for (CategoryFrame frame : FRAMES) {
             frame.render(context, mouseX, mouseY);

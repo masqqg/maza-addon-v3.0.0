@@ -44,12 +44,11 @@ public class ModuleButton {
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + 18;
 
-        int bgColor = module.isEnabled() ? (hovered ? 0xFF8E63FF : 0xFF7C4DFF) : (hovered ? 0xFF2A2A38 : 0xFF20202A);
+        int bgColor = module.isEnabled() ? (hovered ? 0xFF8354FF : 0xFF7C4DFF) : (hovered ? 0xFF2A2A38 : 0xFF20202A);
         context.fill(x, y, x + width, y + 18, bgColor);
 
-        String title = binding ? "Press key..." : module.getName();
-        int textColor = module.isEnabled() ? 0xFFFFFFFF : 0xFFCCCCCC;
-        context.drawTextWithShadow(mc.textRenderer, title, x + 5, y + 5, textColor);
+        String title = binding ? "§bPress key..." : (module.isEnabled() ? "§f" : "§7") + module.getName();
+        context.drawTextWithShadow(mc.textRenderer, title, x + 5, y + 5, 0xFFFFFFFF);
 
         if (!settingComponents.isEmpty()) {
             String arrow = expanded ? "▲" : "▼";
@@ -72,7 +71,8 @@ public class ModuleButton {
 
         if (headerHovered) {
             if (binding) {
-                module.setKey(button == 0 ? GLFW.GLFW_KEY_UNKNOWN : button);
+                // Only actual keyboard keys should set the keybind (handled in
+                // {@link #keyPressed}). Mouse clicks during binding just cancel it.
                 binding = false;
                 return true;
             }
