@@ -1,41 +1,35 @@
-package com.maza.addon.modules;
+package com.maza.client.module.modules.world;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.maza.addon.MazaCategory;
-import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
-import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.ColorSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.EnumSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.RenderUtils;
-import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import meteordevelopment.orbit.EventHandler;
+import com.maza.client.event.EventHandler;
+import com.maza.client.event.PacketEvent;
+import com.maza.client.event.Render3DEvent;
+import com.maza.client.event.TickEvent;
+import com.maza.client.module.Category;
+import com.maza.client.module.Module;
+import com.maza.client.setting.*;
+import com.maza.client.utils.ChatUtils;
+import com.maza.client.utils.Render3DUtils;
+import com.maza.client.utils.ShapeMode;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
+import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
 import net.minecraft.state.property.Properties;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.LightType;
 import net.minecraft.world.chunk.ChunkNibbleArray;
 import net.minecraft.world.chunk.ChunkSection;
@@ -44,70 +38,27 @@ import net.minecraft.world.chunk.WorldChunk;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * SusChunkFinder v5
- *
- * Flags chunks that show signs of long-term player presence, using amethyst as a
- * clock: a geode only finishes growing while its chunk stays loaded for a long
- * time, which normally means a player is nearby.
- *
- * Evidence, all implemented independently:
- *  - Heat / veto (chunk level). Fully grown clusters are heat, a chunk that is
- *    still clearly growing vetoes the area around it.
- *  - Light emitters. Block light is read straight from the light engine. A cell
- *    that is a local maximum with value 1 / 2 / 4 / 5 is a small bud, medium bud,
- *    large bud or cluster, so growth stages are known even when blocks are hidden.
- *    Cells that really are another light source (torch, lantern...) are dropped
- *    through the block luminance. Chunk borders are only trusted when the
- *    neighbouring chunk is loaded.
- *  - Geodes. Emitters closer than 5 blocks are linked into one geode, across chunk
- *    borders. A geode is GROWN when it has many clusters and most of its buds
- *    finished growing (natural geodes sit around 25% clusters, a geode that stayed
- *    loaded for hours is close to 100%). It is HARVESTED when it has lots of young
- *    buds but almost no clusters (someone mined the clusters). The geode centre is
- *    estimated with a least-squares sphere fit.
- *  - Live activity. A bud that grows one stage, or disappears, between two light
- *    updates is an event. Growth outside your own simulation distance can only be
- *    caused by somebody else loading that area, so enough events make a chunk ACTIVE.
- *  - Classic and Palette (auto on DonutFolia) keep the block based scan.
- *  - Palette gate and geode finder (from the amethyst bypass idea): sections are only light
- *    scanned when their palette lists amethyst, and chunks whose palette lists buds get a
- *    marker even when anti-xray hides the buds. Amethyst block updates trigger a rescan.
- *  - Plant clocks. Kelp that reached age 25 and honey-full bee nests only get there
- *    while the chunk stays loaded, so they add (capped) heat. Bamboo, cave vines and
- *    vines are available but off by default, natural generation can already look finished.
- *  - Buried rotated deepslate. Natural deepslate always has the Y axis, so a block with
- *    another axis that is fully enclosed (Y 0..60) was placed by a player.
- *  - Scores are remembered per server and dimension between sessions.
- *  - Flagged chunks are drawn merged (outer border only), the hottest chunk of every
- *    patch is kept, and geodes get a small marker at their centre. No text is drawn.
+ * SusChunkFinder v5 - Standalone Fabric
  */
 public class SusChunkFinder extends Module {
     public enum Method { Classic, Light, Both, All }
     public enum PaletteMode { Auto, On, Off }
 
-    private static final int LIGHT_DELAY_TICKS = 8;     // light follows chunk data
+    private static final int LIGHT_DELAY_TICKS = 8;
     private static final int LIGHT_PACKET_DELAY = 3;
     private static final int BLOCK_PACKET_DELAY = 2;
     private static final int MAX_LIGHT_RETRIES = 6;
     private static final int EDGE_LIGHT = 4;
     private static final int EMPTY_CHECK_MIN_Y = -16;
     private static final int EMPTY_CHECK_MAX_Y = 30;
-    private static final int GEODE_LINK = 5;            // blocks between buds of one geode
+    private static final int GEODE_LINK = 5;
     private static final int GEODE_CELL = 6;
     private static final int GEODE_INTERVAL_TICKS = 10;
-    private static final int OWN_REMOVAL_RADIUS = 12;   // ignore removals this close to you (that is you mining)
+    private static final int OWN_REMOVAL_RADIUS = 12;
     private static final int TIER_HARVESTED = 1;
     private static final int TIER_GROWN = 2;
     private static final int TIER_ACTIVE = 3;
@@ -116,265 +67,164 @@ public class SusChunkFinder extends Module {
     private static final int SLATE_MIN_Y = 0;
     private static final int SLATE_MAX_Y = 60;
     private static final int SLATE_CAP = 256;
-    private static final int COOLDOWN_TICKS = 1200;      // 60 s before a chunk without light is tried again
-    private static final int AUTOSAVE_TICKS = 600;       // 30 s
+    private static final int COOLDOWN_TICKS = 1200;
+    private static final int AUTOSAVE_TICKS = 600;
     private static final int MAX_SAVED_CHUNKS = 20000;
-    private static final Path SAVE_FILE = FabricLoader.getInstance().getGameDir()
-        .resolve("meteor-client").resolve("maza-sus-chunk-finder.json");
+    private static final Path SAVE_FILE = FabricLoader.getInstance().getConfigDir()
+        .resolve("maza").resolve("maza-sus-chunk-finder.json");
 
-    private final SettingGroup general = settings.getDefaultGroup();
-    private final SettingGroup detection = settings.createGroup("Detection");
-    private final SettingGroup geodeGroup = settings.createGroup("Geodes");
-    private final SettingGroup liveGroup = settings.createGroup("Live Activity");
-    private final SettingGroup plantGroup = settings.createGroup("Plant Clocks");
-    private final SettingGroup slateGroup = settings.createGroup("Buried Deepslate");
-    private final SettingGroup performance = settings.createGroup("Performance");
-    private final SettingGroup rendering = settings.createGroup("Render");
+    // Settings
+    public final EnumSetting<Method> method = addSetting(new EnumSetting.Builder<Method>()
+        .name("method").defaultValue(Method.All).build());
 
-    // ---- general
-    private final Setting<Method> method = general.add(new EnumSetting.Builder<Method>()
-        .name("method")
-        .description("All runs Classic block scanning, Light-data scanning, plant clocks, geode analysis and live activity together.")
-        .defaultValue(Method.All).build());
+    public final EnumSetting<PaletteMode> paletteMode = addSetting(new EnumSetting.Builder<PaletteMode>()
+        .name("palette-mode").defaultValue(PaletteMode.Auto).build());
 
-    private final Setting<PaletteMode> paletteMode = general.add(new EnumSetting.Builder<PaletteMode>()
-        .name("palette-mode")
-        .description("Classic scan from block palettes only. Auto turns it on for DonutFolia servers.")
-        .defaultValue(PaletteMode.Auto).build());
+    public final IntSetting scanRange = addSetting(new IntSetting.Builder()
+        .name("scan-range").defaultValue(0).min(0).max(32).sliderMax(32).build());
 
-    private final Setting<Integer> scanRange = general.add(new IntSetting.Builder()
-        .name("scan-range")
-        .description("Chunk radius that is scanned. 0 = your view distance + 1.")
-        .defaultValue(0).min(0).sliderMax(32).build());
+    public final IntSetting sensitivity = addSetting(new IntSetting.Builder()
+        .name("sensitivity").defaultValue(6).min(1).max(50).sliderMin(1).sliderMax(30).build());
 
-    private final Setting<Integer> sensitivity = general.add(new IntSetting.Builder()
-        .name("sensitivity")
-        .description("Heat a chunk needs before it is flagged. Lower = more chunks.")
-        .defaultValue(6).min(1).max(50).sliderMin(1).sliderMax(30).build());
+    public final IntSetting spreadRadius = addSetting(new IntSetting.Builder()
+        .name("spread-radius").defaultValue(0).min(0).max(16).sliderMin(0).sliderMax(16).build());
 
-    private final Setting<Integer> spreadRadius = general.add(new IntSetting.Builder()
-        .name("spread-radius")
-        .description("How far (in chunks) the heat of a chunk spreads.")
-        .defaultValue(0).min(0).max(16).sliderMin(0).sliderMax(16).build());
+    public final IntSetting vetoRadius = addSetting(new IntSetting.Builder()
+        .name("veto-radius").defaultValue(0).min(0).max(16).sliderMin(0).sliderMax(16).build());
 
-    private final Setting<Integer> vetoRadius = general.add(new IntSetting.Builder()
-        .name("veto-radius")
-        .description("How far a still-growing geode blocks flags. 0 = same as spread-radius.")
-        .defaultValue(0).min(0).max(16).sliderMin(0).sliderMax(16).build());
+    public final IntSetting minScanned = addSetting(new IntSetting.Builder()
+        .name("min-scanned-neighbours").defaultValue(3).min(0).max(8).sliderMin(0).sliderMax(8).build());
 
-    private final Setting<Integer> minScanned = general.add(new IntSetting.Builder()
-        .name("min-scanned-neighbours")
-        .description("A chunk is only flagged once this many of its 8 neighbours were scanned.")
-        .defaultValue(3).min(0).max(8).sliderMin(0).sliderMax(8).build());
+    public final BoolSetting relaxEmpty = addSetting(new BoolSetting.Builder()
+        .name("relax-empty-chunks").defaultValue(true).build());
 
-    private final Setting<Boolean> relaxEmpty = general.add(new BoolSetting.Builder()
-        .name("relax-empty-chunks")
-        .description("Chunks with no blocks between Y -16 and 30 only need 1 heat.")
-        .defaultValue(true).build());
+    public final BoolSetting keepFlagged = addSetting(new BoolSetting.Builder()
+        .name("keep-flagged").defaultValue(false).build());
 
-    private final Setting<Boolean> keepFlagged = general.add(new BoolSetting.Builder()
-        .name("keep-flagged")
-        .description("Keep old chunk marks. Turn off to avoid accumulating stale marks.")
-        .defaultValue(false).build());
+    public final BoolSetting hottestOnly = addSetting(new BoolSetting.Builder()
+        .name("hottest-only").defaultValue(true).build());
 
-    private final Setting<Boolean> hottestOnly = general.add(new BoolSetting.Builder()
-        .name("hottest-only")
-        .description("Draw only the hottest chunk of each patch instead of the whole patch.")
-        .defaultValue(true).build());
+    public final BoolSetting notify = addSetting(new BoolSetting.Builder()
+        .name("notify").defaultValue(true).build());
 
-    private final Setting<Boolean> notify = general.add(new BoolSetting.Builder()
-        .name("notify")
-        .description("Chat message when a new suspicious patch or geode is found.")
-        .defaultValue(true).build());
+    public final BoolSetting rememberScores = addSetting(new BoolSetting.Builder()
+        .name("remember-scores").defaultValue(true).build());
 
-    private final Setting<Boolean> rememberScores = general.add(new BoolSetting.Builder()
-        .name("remember-scores")
-        .description("Keep chunk scores per server and dimension between sessions.")
-        .defaultValue(true).build());
-
-    private final Setting<Boolean> debug = general.add(new BoolSetting.Builder()
+    public final BoolSetting debug = addSetting(new BoolSetting.Builder()
         .name("debug").defaultValue(false).build());
 
-    // ---- detection
-    private final Setting<Integer> minY = detection.add(new IntSetting.Builder()
+    public final IntSetting minY = addSetting(new IntSetting.Builder()
         .name("min-y").defaultValue(-64).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
-    private final Setting<Integer> maxY = detection.add(new IntSetting.Builder()
-        .name("max-y")
-        .description("Geodes generate between Y -58 and 30.")
-        .defaultValue(30).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
+    public final IntSetting maxY = addSetting(new IntSetting.Builder()
+        .name("max-y").defaultValue(30).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
-    private final Setting<Boolean> useSources = detection.add(new BoolSetting.Builder()
-        .name("glow-sources")
-        .description("Light method: read bud and cluster emitters (light 1 / 2 / 4 / 5) and their growth stage.")
-        .defaultValue(true).build());
+    public final BoolSetting useSources = addSetting(new BoolSetting.Builder()
+        .name("glow-sources").defaultValue(true).build());
 
-    private final Setting<Boolean> useEdges = detection.add(new BoolSetting.Builder()
-        .name("glow-edges")
-        .description("Light method: count open cells at light 0 that touch a light-4 cell.")
-        .defaultValue(true).build());
+    public final BoolSetting useEdges = addSetting(new BoolSetting.Builder()
+        .name("glow-edges").defaultValue(true).build());
 
-    private final Setting<Integer> edgeCellsPerHeat = detection.add(new IntSetting.Builder()
-        .name("edge-cells-per-heat")
-        .description("Glow edge cells needed for 1 heat.")
-        .defaultValue(12).min(1).max(64).sliderMin(1).sliderMax(64).build());
+    public final IntSetting edgeCellsPerHeat = addSetting(new IntSetting.Builder()
+        .name("edge-cells-per-heat").defaultValue(12).min(1).max(64).sliderMin(1).sliderMax(64).build());
 
-    private final Setting<Boolean> touchGeode = detection.add(new BoolSetting.Builder()
-        .name("touch-geode")
-        .description("A light source only counts as a bud when it touches a visible amethyst or budding amethyst block. Stricter, but useless when anti-xray hides those blocks too.")
-        .defaultValue(false).build());
+    public final BoolSetting touchGeode = addSetting(new BoolSetting.Builder()
+        .name("touch-geode").defaultValue(false).build());
 
-    private final Setting<Boolean> paletteGate = detection.add(new BoolSetting.Builder()
-        .name("palette-gate")
-        .description("Light scan only looks at sections whose block palette lists amethyst (and the sections next to them). Anti-xray hides the blocks but not the palette, so this keeps the scan on real geodes and away from torches and lamps.")
-        .defaultValue(true).build());
+    public final BoolSetting paletteGate = addSetting(new BoolSetting.Builder()
+        .name("palette-gate").defaultValue(true).build());
 
-    private final Setting<Double> minMaturity = detection.add(new DoubleSetting.Builder()
-        .name("min-maturity")
-        .description("Share of buds that must be fully grown clusters. Natural geodes sit near 0.25, long loaded ones near 1.")
-        .defaultValue(0.6).min(0.0).max(1.0).sliderMin(0.0).sliderMax(1.0).build());
+    public final DoubleSetting minMaturity = addSetting(new DoubleSetting.Builder()
+        .name("min-maturity").defaultValue(0.6).min(0.0).max(1.0).sliderMin(0.0).sliderMax(1.0).build());
 
-    // ---- geodes
-    private final Setting<Boolean> geodeTiers = geodeGroup.add(new BoolSetting.Builder()
-        .name("geode-tiers")
-        .description("Group buds into geodes and flag grown / harvested ones.")
-        .defaultValue(true).build());
+    public final BoolSetting geodeTiers = addSetting(new BoolSetting.Builder()
+        .name("geode-tiers").defaultValue(true).build());
 
-    private final Setting<Integer> grownClusters = geodeGroup.add(new IntSetting.Builder()
-        .name("grown-clusters")
-        .description("Clusters a geode needs to count as GROWN.")
-        .defaultValue(8).min(2).max(40).sliderMin(2).sliderMax(40).build());
+    public final IntSetting grownClusters = addSetting(new IntSetting.Builder()
+        .name("grown-clusters").defaultValue(8).min(2).max(40).sliderMin(2).sliderMax(40).build());
 
-    private final Setting<Boolean> flagHarvested = geodeGroup.add(new BoolSetting.Builder()
-        .name("flag-harvested")
-        .description("Flag geodes full of young buds with almost no clusters (someone mined them).")
-        .defaultValue(true).build());
+    public final BoolSetting flagHarvested = addSetting(new BoolSetting.Builder()
+        .name("flag-harvested").defaultValue(true).build());
 
-    private final Setting<Integer> harvestYoungBuds = geodeGroup.add(new IntSetting.Builder()
-        .name("harvest-young-buds")
-        .description("Small + medium buds a geode needs to count as HARVESTED.")
-        .defaultValue(12).min(3).max(60).sliderMin(3).sliderMax(60).build());
+    public final IntSetting harvestYoungBuds = addSetting(new IntSetting.Builder()
+        .name("harvest-young-buds").defaultValue(12).min(3).max(60).sliderMin(3).sliderMax(60).build());
 
-    private final Setting<Integer> harvestMinMedium = geodeGroup.add(new IntSetting.Builder()
-        .name("harvest-min-medium")
-        .defaultValue(3).min(0).max(20).sliderMin(0).sliderMax(20).build());
+    public final IntSetting harvestMinMedium = addSetting(new IntSetting.Builder()
+        .name("harvest-min-medium").defaultValue(3).min(0).max(20).sliderMin(0).sliderMax(20).build());
 
-    private final Setting<Integer> harvestMaxClusters = geodeGroup.add(new IntSetting.Builder()
-        .name("harvest-max-clusters")
-        .defaultValue(2).min(0).max(10).sliderMin(0).sliderMax(10).build());
+    public final IntSetting harvestMaxClusters = addSetting(new IntSetting.Builder()
+        .name("harvest-max-clusters").defaultValue(2).min(0).max(10).sliderMin(0).sliderMax(10).build());
 
-    // ---- live activity
-    private final Setting<Boolean> liveEvents = liveGroup.add(new BoolSetting.Builder()
-        .name("live-events")
-        .description("Watch buds grow or vanish between light updates. Needs Light or Both.")
-        .defaultValue(true).build());
+    public final BoolSetting liveEvents = addSetting(new BoolSetting.Builder()
+        .name("live-events").defaultValue(true).build());
 
-    private final Setting<Integer> minEvents = liveGroup.add(new IntSetting.Builder()
-        .name("min-events")
-        .description("Events in the window before a chunk is flagged ACTIVE.")
-        .defaultValue(3).min(1).max(30).sliderMin(1).sliderMax(30).build());
+    public final IntSetting minEvents = addSetting(new IntSetting.Builder()
+        .name("min-events").defaultValue(3).min(1).max(30).sliderMin(1).sliderMax(30).build());
 
-    private final Setting<Integer> eventWindow = liveGroup.add(new IntSetting.Builder()
-        .name("event-window-minutes")
-        .defaultValue(10).min(1).max(120).sliderMin(1).sliderMax(120).build());
+    public final IntSetting eventWindow = addSetting(new IntSetting.Builder()
+        .name("event-window-minutes").defaultValue(10).min(1).max(120).sliderMin(1).sliderMax(120).build());
 
-    private final Setting<Integer> ignoreNear = liveGroup.add(new IntSetting.Builder()
-        .name("ignore-near-chunks")
-        .description("Growth inside this radius is caused by you being there. 0 = your simulation distance.")
-        .defaultValue(0).min(0).max(32).sliderMin(0).sliderMax(32).build());
+    public final IntSetting ignoreNear = addSetting(new IntSetting.Builder()
+        .name("ignore-near-chunks").defaultValue(0).min(0).max(32).sliderMin(0).sliderMax(32).build());
 
-    // ---- plant clocks
-    private final Setting<Boolean> plantClocks = plantGroup.add(new BoolSetting.Builder()
-        .name("plant-clocks")
-        .description("Finished plants add heat: they only finish while the chunk stays loaded.")
-        .defaultValue(true).build());
+    public final BoolSetting plantClocks = addSetting(new BoolSetting.Builder()
+        .name("plant-clocks").defaultValue(true).build());
 
-    private final Setting<Integer> plantCap = plantGroup.add(new IntSetting.Builder()
-        .name("cap-per-type")
-        .description("Max heat one plant type adds per chunk, so a big kelp forest cannot flag a chunk alone.")
-        .defaultValue(3).min(1).max(20).sliderMin(1).sliderMax(20).build());
+    public final IntSetting plantCap = addSetting(new IntSetting.Builder()
+        .name("cap-per-type").defaultValue(3).min(1).max(20).sliderMin(1).sliderMax(20).build());
 
-    private final Setting<Boolean> plantKelp = plantGroup.add(new BoolSetting.Builder()
-        .name("kelp")
-        .description("Kelp tips that reached age 25. Natural kelp is generated at age 20-23.")
-        .defaultValue(true).build());
+    public final BoolSetting plantKelp = addSetting(new BoolSetting.Builder()
+        .name("kelp").defaultValue(true).build());
 
-    private final Setting<Boolean> plantBeeNests = plantGroup.add(new BoolSetting.Builder()
-        .name("bee-nests")
-        .description("Bee nests with full honey. Natural nests start empty.")
-        .defaultValue(true).build());
+    public final BoolSetting plantBeeNests = addSetting(new BoolSetting.Builder()
+        .name("bee-nests").defaultValue(true).build());
 
-    private final Setting<Boolean> plantBamboo = plantGroup.add(new BoolSetting.Builder()
-        .name("bamboo")
-        .description("Bamboo tops that stopped growing. Unverified, natural bamboo may already look finished.")
-        .defaultValue(false).build());
+    public final BoolSetting plantBamboo = addSetting(new BoolSetting.Builder()
+        .name("bamboo").defaultValue(false).build());
 
-    private final Setting<Boolean> plantCaveVines = plantGroup.add(new BoolSetting.Builder()
-        .name("cave-vines")
-        .description("Cave vine tips at age 25. Unverified, natural cave vines may already look finished.")
-        .defaultValue(false).build());
+    public final BoolSetting plantCaveVines = addSetting(new BoolSetting.Builder()
+        .name("cave-vines").defaultValue(false).build());
 
-    private final Setting<Boolean> plantVines = plantGroup.add(new BoolSetting.Builder()
-        .name("vines")
-        .description("Vines resting on a block. Natural jungle vines already do that, expect false positives.")
-        .defaultValue(false).build());
+    public final BoolSetting plantVines = addSetting(new BoolSetting.Builder()
+        .name("vines").defaultValue(false).build());
 
-    // ---- buried deepslate
-    private final Setting<Boolean> rotatedDeepslate = slateGroup.add(new BoolSetting.Builder()
-        .name("rotated-deepslate")
-        .description("Outline deepslate that is not on the Y axis and fully enclosed (Y 0 to 60): placed by a player.")
-        .defaultValue(true).build());
+    public final BoolSetting rotatedDeepslate = addSetting(new BoolSetting.Builder()
+        .name("rotated-deepslate").defaultValue(true).build());
 
-    private final Setting<Integer> maxSlateBoxes = slateGroup.add(new IntSetting.Builder()
-        .name("max-boxes")
-        .defaultValue(256).min(1).sliderMax(1024).build());
+    public final IntSetting maxSlateBoxes = addSetting(new IntSetting.Builder()
+        .name("max-boxes").defaultValue(256).min(1).sliderMax(1024).build());
 
-    private final Setting<SettingColor> slateColor = slateGroup.add(new ColorSetting.Builder()
+    public final ColorSetting slateColor = addSetting(new ColorSetting.Builder()
         .name("color").defaultValue(new SettingColor(0, 255, 255, 220)).build());
 
-    // ---- performance
-    private final Setting<Integer> scanBudgetMs = performance.add(new IntSetting.Builder()
-        .name("scan-budget-ms")
-        .description("Max milliseconds per tick spent scanning chunks.")
-        .defaultValue(3).min(1).max(20).sliderMin(1).sliderMax(20).build());
+    public final IntSetting scanBudgetMs = addSetting(new IntSetting.Builder()
+        .name("scan-budget-ms").defaultValue(3).min(1).max(20).sliderMin(1).sliderMax(20).build());
 
-    // ---- render
-    private final Setting<Integer> renderRange = rendering.add(new IntSetting.Builder()
-        .name("render-range")
-        .description("Chunk radius in which flagged chunks are drawn.")
-        .defaultValue(12).min(1).sliderMax(32).build());
+    public final IntSetting renderRange = addSetting(new IntSetting.Builder()
+        .name("render-range").defaultValue(12).min(1).sliderMax(32).build());
 
-    private final Setting<SettingColor> fillColor = rendering.add(new ColorSetting.Builder()
+    public final ColorSetting fillColor = addSetting(new ColorSetting.Builder()
         .name("fill-color").defaultValue(new SettingColor(255, 0, 0, 70)).build());
 
-    private final Setting<SettingColor> lineColor = rendering.add(new ColorSetting.Builder()
+    public final ColorSetting lineColor = addSetting(new ColorSetting.Builder()
         .name("line-color").defaultValue(new SettingColor(255, 0, 0, 230)).build());
 
-    private final Setting<Boolean> outline = rendering.add(new BoolSetting.Builder()
-        .name("outline")
-        .description("Draw a border around patches (shared chunk edges are skipped).")
-        .defaultValue(true).build());
+    public final BoolSetting outline = addSetting(new BoolSetting.Builder()
+        .name("outline").defaultValue(true).build());
 
-    private final Setting<Double> borderHeight = rendering.add(new DoubleSetting.Builder()
-        .name("border-height")
-        .description("Height of the translucent border walls. 0 = flat only.")
-        .defaultValue(2.0).min(0.0).sliderMax(8.0).build());
+    public final DoubleSetting borderHeight = addSetting(new DoubleSetting.Builder()
+        .name("border-height").defaultValue(2.0).min(0.0).sliderMax(8.0).build());
 
-    private final Setting<Boolean> tracers = rendering.add(new BoolSetting.Builder()
-        .name("tracers")
-        .description("Line from you to the hottest chunk of each patch and to geode centres.")
-        .defaultValue(true).build());
+    public final BoolSetting tracers = addSetting(new BoolSetting.Builder()
+        .name("tracers").defaultValue(true).build());
 
-    private final Setting<Integer> renderY = rendering.add(new IntSetting.Builder()
-        .name("render-y")
-        .description("Height the chunk marks are drawn at.")
-        .defaultValue(64).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
+    public final IntSetting renderY = addSetting(new IntSetting.Builder()
+        .name("render-y").defaultValue(64).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
-    private final Setting<Integer> renderHeight = rendering.add(new IntSetting.Builder()
+    public final IntSetting renderHeight = addSetting(new IntSetting.Builder()
         .name("render-height").defaultValue(1).min(1).sliderMax(8).build());
 
-    // ---- data
-    /** One bud or cluster. stage: 1 small, 2 medium, 3 large, 4 cluster. */
+    // Data records
     private record Bud(int x, int y, int z, int stage) {}
 
     private record Stats(int small, int medium, int large, int clusters) {
@@ -401,23 +251,23 @@ public class SusChunkFinder extends Module {
         static final PlantScan NONE = new PlantScan(0, List.of());
     }
 
-    // ---- runtime state (client thread only)
-    private final Map<Long, Score> scores = new HashMap<>();             // per scanned chunk
-    private final Map<Long, Integer> heat = new HashMap<>();             // spread heat
-    private final Map<Long, Integer> vetoes = new HashMap<>();           // spread veto counts
-    private final Map<Long, Integer> pending = new HashMap<>();          // chunk -> due tick
+    // Runtime state
+    private final Map<Long, Score> scores = new HashMap<>();
+    private final Map<Long, Integer> heat = new HashMap<>();
+    private final Map<Long, Integer> vetoes = new HashMap<>();
+    private final Map<Long, Integer> pending = new HashMap<>();
     private final ArrayDeque<Long> ready = new ArrayDeque<>();
     private final Set<Long> readySet = new HashSet<>();
     private final Map<Long, Integer> retries = new HashMap<>();
-    private final Set<Long> lightTriggered = new HashSet<>();            // scans caused by a light packet
-    private final Map<Long, List<Bud>> emitters = new HashMap<>();       // last bud snapshot per chunk
-    private final Map<Long, ArrayDeque<Long>> eventLog = new HashMap<>(); // chunk -> event timestamps (ms)
-    private final Map<Long, Integer> cooldown = new HashMap<>();         // chunk -> tick when it may be rescanned
-    private final Set<Long> restored = new HashSet<>();                  // scores loaded from disk, still to be verified
-    private final Map<Long, List<BlockPos>> deepslate = new HashMap<>(); // buried rotated deepslate per chunk
-    private final Map<Long, Integer> flagged = new HashMap<>();          // chunks that are drawn
-    private final Map<Long, Integer> sticky = new HashMap<>();           // chunks that were flagged once (keep-flagged)
-    private final Map<Long, Integer> peaks = new HashMap<>();            // hottest chunk of every patch
+    private final Set<Long> lightTriggered = new HashSet<>();
+    private final Map<Long, List<Bud>> emitters = new HashMap<>();
+    private final Map<Long, ArrayDeque<Long>> eventLog = new HashMap<>();
+    private final Map<Long, Integer> cooldown = new HashMap<>();
+    private final Set<Long> restored = new HashSet<>();
+    private final Map<Long, List<BlockPos>> deepslate = new HashMap<>();
+    private final Map<Long, Integer> flagged = new HashMap<>();
+    private final Map<Long, Integer> sticky = new HashMap<>();
+    private final Map<Long, Integer> peaks = new HashMap<>();
     private final List<Marker> markers = new ArrayList<>();
     private final Set<Long> announced = new HashSet<>();
     private final Set<String> announcedGeodes = new HashSet<>();
@@ -435,36 +285,29 @@ public class SusChunkFinder extends Module {
     private int lastSaveTick;
 
     public SusChunkFinder() {
-        super(
-            MazaCategory.INSTANCE,
-            "sus-chunk-finder",
-            "Finds chunks with signs of long-term player activity from amethyst growth."
-        );
+        super("SusChunkFinder", "Finds chunks with signs of long-term player activity from amethyst growth", Category.WORLD);
     }
 
     @Override
-    public void onActivate() {
+    public void onEnable() {
         clearRuntime();
         lastWorld = null;
         saveRoot = rememberScores.get() ? loadSaveFile() : null;
     }
 
     @Override
-    public void onDeactivate() {
+    public void onDisable() {
         saveScores(false);
         clearRuntime();
         lastWorld = null;
     }
 
-    @Override
-    public String getInfoString() {
-        return peaks.isEmpty() ? null : String.valueOf(peaks.size());
+    private void print(String format, Object... args) {
+        ChatUtils.info(String.format(format, args));
     }
 
-    // ------------------------------------------------------------------ events
-
     @EventHandler
-    private void onTick(TickEvent.Post event) {
+    public void onTick(TickEvent.Post event) {
         if (mc.world == null || mc.player == null) {
             saveScores(false);
             clearRuntime();
@@ -474,7 +317,7 @@ public class SusChunkFinder extends Module {
 
         int signature = signature();
         if (mc.world != lastWorld || signature != appliedSignature) {
-            if (mc.world != lastWorld) saveScores(false); // still the old world, key and signature
+            if (mc.world != lastWorld) saveScores(false);
             clearRuntime();
             lastWorld = mc.world;
             appliedSignature = signature;
@@ -491,7 +334,7 @@ public class SusChunkFinder extends Module {
         if (tick % 10 == 0) sweep();
         if (tick % 20 == 0) {
             pruneUnloaded();
-            dirty = true; // re-check which flagged chunks are still loaded, expire events
+            dirty = true;
         }
 
         releaseDue();
@@ -504,19 +347,14 @@ public class SusChunkFinder extends Module {
     }
 
     @EventHandler
-    private void onChunkData(ChunkDataEvent event) {
-        if (mc.world == null || mc.player == null || event.chunk() == null) return;
+    public void onPacket(PacketEvent.Receive event) {
+        if (event.packet instanceof ChunkDataS2CPacket chunkData) {
+            if (mc.world == null || mc.player == null) return;
+            if (!inScanRange(chunkData.getChunkX(), chunkData.getChunkZ())) return;
+            schedule(ChunkPos.toLong(chunkData.getChunkX(), chunkData.getChunkZ()), LIGHT_DELAY_TICKS);
+            return;
+        }
 
-        ChunkPos pos = event.chunk().getPos();
-        if (!inScanRange(pos.x, pos.z)) return;
-
-        // Light is applied by the light engine after the chunk itself.
-        schedule(ChunkPos.toLong(pos.x, pos.z), LIGHT_DELAY_TICKS);
-    }
-
-    @EventHandler
-    private void onPacket(PacketEvent.Receive event) {
-        // A bud or cluster that appears, grows or changes needs a fresh look at its chunk.
         if (event.packet instanceof BlockUpdateS2CPacket update) {
             if (isAmethystState(update.getState())) {
                 long key = ChunkPos.toLong(update.getPos().getX() >> 4, update.getPos().getZ() >> 4);
@@ -524,6 +362,7 @@ public class SusChunkFinder extends Module {
             }
             return;
         }
+
         if (event.packet instanceof ChunkDeltaUpdateS2CPacket delta) {
             Set<Long> touched = new HashSet<>();
             delta.visitUpdates((pos, state) -> {
@@ -536,7 +375,6 @@ public class SusChunkFinder extends Module {
         if (event.packet instanceof LightUpdateS2CPacket light) {
             int cx = light.getChunkX();
             int cz = light.getChunkZ();
-            // Hop to the client thread; the delay lets the light engine apply it first.
             mc.execute(() -> {
                 if (mc.world == null || mc.player == null || !inScanRange(cx, cz)) return;
                 long key = ChunkPos.toLong(cx, cz);
@@ -545,20 +383,6 @@ public class SusChunkFinder extends Module {
             });
         }
     }
-
-    @EventHandler
-    private void onBlockUpdate(BlockUpdateEvent event) {
-        if (mc.world == null || mc.player == null || event.pos == null) return;
-        if (!isGrowthRelated(event.oldState) && !isGrowthRelated(event.newState)) return;
-
-        int cx = event.pos.getX() >> 4;
-        int cz = event.pos.getZ() >> 4;
-        if (!inScanRange(cx, cz)) return;
-
-        schedule(ChunkPos.toLong(cx, cz), LIGHT_DELAY_TICKS);
-    }
-
-    // --------------------------------------------------------------- scheduling
 
     private void blockTouched(long key) {
         if (mc.world == null || mc.player == null) return;
@@ -575,7 +399,6 @@ public class SusChunkFinder extends Module {
         pending.merge(key, tick + delay, Math::max);
     }
 
-    /** Queue every loaded, not yet scanned chunk in range. */
     private void sweep() {
         int cx = mc.player.getChunkPos().x;
         int cz = mc.player.getChunkPos().z;
@@ -587,7 +410,6 @@ public class SusChunkFinder extends Module {
                 Integer wait = cooldown.get(key);
                 if (wait != null && wait > tick) continue;
                 boolean retry = wait != null;
-                // Restored scores are rescanned once the chunk is really loaded.
                 if (!retry && scores.containsKey(key) && !restored.contains(key)) continue;
                 if (pending.containsKey(key) || readySet.contains(key)) continue;
                 if (!loaded(x, z)) continue;
@@ -628,7 +450,6 @@ public class SusChunkFinder extends Module {
         }
     }
 
-    /** Scores of unloaded chunks are kept (their heat still counts); stale queue entries and snapshots go. */
     private void pruneUnloaded() {
         pending.keySet().removeIf(key -> {
             ChunkPos cp = new ChunkPos(key);
@@ -641,14 +462,11 @@ public class SusChunkFinder extends Module {
             return !loaded(cp.x, cp.z);
         });
 
-        // A reloaded chunk must not be diffed against what it looked like long ago.
         if (emitters.keySet().removeIf(key -> {
             ChunkPos cp = new ChunkPos(key);
             return !loaded(cp.x, cp.z);
         })) geodesStale = true;
     }
-
-    // ----------------------------------------------------------------- scanning
 
     private void scanOne(long key) {
         ChunkPos cp = new ChunkPos(key);
@@ -679,16 +497,13 @@ public class SusChunkFinder extends Module {
                 } else {
                     lightBuds = scan.buds();
                     lightStats = Stats.of(lightBuds);
-
                     int fromEdges = scan.edges() / Math.max(1, edgeCellsPerHeat.get());
                     lightHeat = Math.max(lightStats.clusters(), fromEdges);
-
-                    // Still clearly growing: young buds around and few finished clusters.
                     if (lightStats.young() > 0 && lightStats.maturity() < minMaturity.get()) ungrown = true;
                 }
             }
         } catch (RuntimeException e) {
-            if (debug.get()) info("Scan failed at %d, %d: %s", cp.x, cp.z, e.toString());
+            if (debug.get()) print("Scan failed at %d, %d: %s", cp.x, cp.z, e.toString());
             lightTriggered.remove(key);
             return;
         }
@@ -702,7 +517,6 @@ public class SusChunkFinder extends Module {
         boolean hasBlocks = hasBlocksInRange(chunk, EMPTY_CHECK_MIN_Y, EMPTY_CHECK_MAX_Y);
         applyScore(key, new Score(total, ungrown, hasBlocks, spreadRadius.get(), effectiveVetoRadius()));
 
-        // Snapshot the buds of this chunk for geode grouping and live diffs.
         List<Bud> snapshot = (lightBuds != null && !lightBuds.isEmpty()) ? lightBuds
             : (blockBuds != null ? blockBuds : lightBuds);
         boolean live = lightTriggered.remove(key);
@@ -714,14 +528,11 @@ public class SusChunkFinder extends Module {
             geodesStale = true;
         }
 
-        // Light data may not have arrived yet: the block result is shown now, refined shortly.
         if (lightMissing) {
             int tries = retries.merge(key, 1, Integer::sum);
             if (tries <= MAX_LIGHT_RETRIES) {
                 schedule(key, LIGHT_DELAY_TICKS);
             } else {
-                // Never bake a permanent zero. Try this chunk again after a cooldown,
-                // a late light packet will rescue it sooner.
                 retries.remove(key);
                 cooldown.put(key, tick + COOLDOWN_TICKS);
                 if (m == Method.Light) {
@@ -738,17 +549,13 @@ public class SusChunkFinder extends Module {
         if (debug.get()) {
             String stages = lightStats == null ? ""
                 : String.format(" stages %d/%d/%d/%d", lightStats.small(), lightStats.medium(), lightStats.large(), lightStats.clusters());
-            info("Scanned %d, %d -> heat %d (blocks %d, light %d, plants %d)%s%s%s%s",
+            print("Scanned %d, %d -> heat %d (blocks %d, light %d, plants %d)%s%s%s%s",
                 cp.x, cp.z, total, blockHeat, lightHeat, plants.heat(), stages, ungrown ? " [ungrown]" : "",
                 lightMissing ? " [no light yet]" : "",
                 plants.deepslate().isEmpty() ? "" : " [" + plants.deepslate().size() + " buried deepslate]");
         }
     }
 
-    /**
-     * Classic scan. Fully grown cluster = +1. A bud on anything but budding amethyst
-     * = +1. A bud still on budding amethyst marks the chunk "ungrown".
-     */
     private BlockScan scanBlocks(WorldChunk chunk) {
         ChunkSection[] sections = chunk.getSectionArray();
         List<Bud> buds = new ArrayList<>();
@@ -769,8 +576,6 @@ public class SusChunkFinder extends Module {
 
             int sectionBottom = bottom + i * 16;
             if (sectionBottom + 15 < lo || sectionBottom > hi) continue;
-
-            // Palette-level rejection: skip sections with no growth blocks at all.
             if (!section.hasAny(SusChunkFinder::isGrowthState)) continue;
 
             int y0 = Math.max(0, lo - sectionBottom);
@@ -799,7 +604,7 @@ public class SusChunkFinder extends Module {
                         support.set(wx + back.getOffsetX(), wy + back.getOffsetY(), wz + back.getOffsetZ());
 
                         Block base = blockAt(chunk, support);
-                        if (base == null) continue; // neighbour chunk not loaded: unknown
+                        if (base == null) continue;
 
                         if (base == Blocks.BUDDING_AMETHYST) ungrown = true;
                         else heatCount++;
@@ -811,7 +616,6 @@ public class SusChunkFinder extends Module {
         return new BlockScan(heatCount, ungrown, buds);
     }
 
-    /** Palette-only scan: any bud = ungrown, otherwise any cluster = 1 heat. */
     private BlockScan scanPalette(WorldChunk chunk) {
         ChunkSection[] sections = chunk.getSectionArray();
         List<Bud> none = List.of();
@@ -838,11 +642,6 @@ public class SusChunkFinder extends Module {
         return new BlockScan(sawCluster ? 1 : 0, false, none);
     }
 
-    /**
-     * Light scan over the 0..15 block-light values of this chunk and its 8 neighbours.
-     * Returns null when no light data is available around the chunk yet.
-     */
-    /** Sections whose palette lists amethyst. Anti-xray can hide the blocks, the palette still tells. */
     private static boolean[] geodeSections(ChunkSection[] sections) {
         boolean[] out = new boolean[sections.length];
         for (int i = 0; i < sections.length; i++) {
@@ -852,7 +651,6 @@ public class SusChunkFinder extends Module {
         return out;
     }
 
-    /** A geode can straddle a section border, so the sections above and below count too. */
     private static boolean nearGeode(boolean[] gate, int i) {
         return gate[i] || (i > 0 && gate[i - 1]) || (i + 1 < gate.length && gate[i + 1]);
     }
@@ -876,7 +674,7 @@ public class SusChunkFinder extends Module {
         int hi = maxY.get();
         boolean sources = useSources.get();
         boolean edges = useEdges.get();
-        boolean untrusted = usePalette(); // hidden blocks: judge openness from light alone
+        boolean untrusted = usePalette();
         BlockPos.Mutable cursor = new BlockPos.Mutable();
         boolean[] gate = paletteGate.get() ? geodeSections(sections) : null;
         boolean needTouch = touchGeode.get();
@@ -916,8 +714,6 @@ public class SusChunkFinder extends Module {
                         if (!sources || lightStage == 0) continue;
                         if (!isEmitter(lights, wx, y, wz, value)) continue;
 
-                        // The block knows better than the light: a bud keeps its own stage,
-                        // anything else that glows is a real light source (torch, lantern...).
                         BlockState state = section.getBlockState(x, y & 15, z);
                         int stage = stageForBlock(state.getBlock());
                         if (stage == 0) {
@@ -934,7 +730,6 @@ public class SusChunkFinder extends Module {
         return new LightScan(buds, edgeCount);
     }
 
-    /** An amethyst or budding amethyst block on any of the six sides (blocks the client can actually see). */
     private boolean touchesGeodeBlock(WorldChunk home, BlockPos.Mutable cursor, int x, int y, int z) {
         for (Direction d : DIRS) {
             BlockState neighbour = stateAt(home, cursor, x + d.getOffsetX(), y + d.getOffsetY(), z + d.getOffsetZ());
@@ -945,11 +740,6 @@ public class SusChunkFinder extends Module {
         return false;
     }
 
-    /**
-     * A bud or cluster is a local maximum of the block light: no neighbour is brighter.
-     * Every neighbour must be readable, otherwise a falloff cell next to a chunk we
-     * cannot see would look like a source.
-     */
     private static boolean isEmitter(LightCache lights, int x, int y, int z, int value) {
         for (Direction d : DIRS) {
             int nx = x + d.getOffsetX();
@@ -960,7 +750,6 @@ public class SusChunkFinder extends Module {
         return true;
     }
 
-    /** Cheap pre-check: every neighbour <= 4 and the brightest is exactly 4. */
     private static boolean touchesGlowEdge(LightCache lights, int x, int y, int z) {
         int brightest = 0;
         for (Direction d : DIRS) {
@@ -974,7 +763,6 @@ public class SusChunkFinder extends Module {
         return brightest == EDGE_LIGHT;
     }
 
-    /** One of the light-4 neighbours must itself be open (air or a cluster). */
     private boolean hasLitOpening(LightCache lights, BlockPos.Mutable cursor, int x, int y, int z) {
         for (Direction d : DIRS) {
             int nx = x + d.getOffsetX();
@@ -990,7 +778,6 @@ public class SusChunkFinder extends Module {
         return state.isAir() || state.isOf(Blocks.AMETHYST_CLUSTER);
     }
 
-    /** Light the four growth stages give off: small 1, medium 2, large 4, cluster 5. */
     private static int stageForLight(int value) {
         return switch (value) {
             case 1 -> 1;
@@ -1009,7 +796,6 @@ public class SusChunkFinder extends Module {
         return 0;
     }
 
-    /** Block-light layers of a chunk and its 8 neighbours, so neighbours across borders resolve. */
     private static final class LightCache {
         private final ChunkNibbleArray[][][] layers;
         private final boolean[][] chunkLoaded = new boolean[3][3];
@@ -1040,7 +826,6 @@ public class SusChunkFinder extends Module {
             }
         }
 
-        /** True when the chunk that contains this column is loaded, so its light can be trusted. */
         boolean known(int x, int z) {
             int dx = (x >> 4) - cx;
             int dz = (z >> 4) - cz;
@@ -1096,22 +881,15 @@ public class SusChunkFinder extends Module {
         return false;
     }
 
-    // -------------------------------------------------- plants and buried deepslate
-
     private PlantScan scanPlantsSafe(WorldChunk chunk) {
         try {
             return scanPlants(chunk);
         } catch (RuntimeException e) {
-            if (debug.get()) info("Plant scan failed: %s", e.toString());
+            if (debug.get()) print("Plant scan failed: %s", e.toString());
             return PlantScan.NONE;
         }
     }
 
-    /**
-     * Plant clocks and buried deepslate in one pass. Sections are rejected through their
-     * palette first, so a chunk without any of these blocks costs almost nothing.
-     * Finished plants add heat, at most {@code cap-per-type} for every type.
-     */
     private PlantScan scanPlants(WorldChunk chunk) {
         final boolean kelp = plantKelp.get();
         final boolean bees = plantBeeNests.get();
@@ -1198,13 +976,12 @@ public class SusChunkFinder extends Module {
         }
 
         int cap = plantCap.get();
-        int heat = Math.min(kelpN, cap) + Math.min(beeN, cap) + Math.min(bambooN, cap)
+        int heatVal = Math.min(kelpN, cap) + Math.min(beeN, cap) + Math.min(bambooN, cap)
             + Math.min(caveN, cap) + Math.min(vineN, cap);
 
-        return new PlantScan(heat, slateList == null || slateList.isEmpty() ? List.of() : slateList);
+        return new PlantScan(heatVal, slateList == null || slateList.isEmpty() ? List.of() : slateList);
     }
 
-    /** No air on any of the six sides. An unloaded neighbour counts as "unknown", so not enclosed. */
     private boolean fullyEnclosed(WorldChunk home, BlockPos.Mutable cursor, int x, int y, int z) {
         for (Direction d : DIRS) {
             BlockState neighbour = stateAt(home, cursor, x + d.getOffsetX(), y + d.getOffsetY(), z + d.getOffsetZ());
@@ -1223,11 +1000,6 @@ public class SusChunkFinder extends Module {
         return mc.world.getBlockState(cursor);
     }
 
-    /**
-     * Block-free opening check for servers that hide blocks: a light-4 neighbour whose own
-     * neighbours are mostly 3 or brighter is a cell light passes through, so it is open in
-     * the real world even if the server sent a fake block state for it. Heuristic.
-     */
     private static boolean lightConsistentOpening(LightCache lights, int x, int y, int z) {
         for (Direction d : DIRS) {
             int nx = x + d.getOffsetX();
@@ -1246,8 +1018,6 @@ public class SusChunkFinder extends Module {
         return false;
     }
 
-    // ------------------------------------------------------------- persistence
-
     private String saveKey() {
         var entry = mc.getCurrentServerEntry();
         String server = entry != null ? entry.address : "singleplayer";
@@ -1263,7 +1033,6 @@ public class SusChunkFinder extends Module {
         }
     }
 
-    /** Scores saved by an earlier session count as heat and veto until the chunk is scanned again. */
     private void applyPersistedScores() {
         if (!rememberScores.get() || persistedApplied || saveRoot == null || activeSaveKey == null) return;
         persistedApplied = true;
@@ -1273,11 +1042,8 @@ public class SusChunkFinder extends Module {
             if (entry == null || !entry.isJsonObject()) return;
 
             JsonObject dim = entry.getAsJsonObject();
-
-            // Flags you have seen come back after a relog whatever the detection settings were.
             restoreSticky(dim);
 
-            // Scores made with other detection settings would mix incompatible numbers.
             if (!dim.has("sig") || dim.get("sig").getAsInt() != appliedSignature) return;
             if (!dim.has("chunks") || !dim.get("chunks").isJsonObject()) return;
 
@@ -1295,15 +1061,11 @@ public class SusChunkFinder extends Module {
                     applyScore(key, new Score(o.get("h").getAsInt(), o.get("u").getAsBoolean(), o.get("b").getAsBoolean(), hr, vr));
                     restored.add(key);
                     count++;
-                } catch (RuntimeException ignored) {
-                    // one broken entry must not drop the rest
-                }
+                } catch (RuntimeException ignored) {}
             }
 
-            if (debug.get()) info("Restored %d saved chunk scores", count);
-        } catch (RuntimeException ignored) {
-            // corrupt file section: start clean
-        }
+            if (debug.get()) print("Restored %d saved chunk scores", count);
+        } catch (RuntimeException ignored) {}
     }
 
     private void restoreSticky(JsonObject dim) {
@@ -1315,9 +1077,7 @@ public class SusChunkFinder extends Module {
                 long key = ChunkPos.toLong(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
                 sticky.put(key, e.getValue().getAsInt());
                 dirty = true;
-            } catch (RuntimeException ignored) {
-                // skip a broken entry
-            }
+            } catch (RuntimeException ignored) {}
         }
     }
 
@@ -1329,7 +1089,7 @@ public class SusChunkFinder extends Module {
         for (Map.Entry<Long, Score> e : scores.entrySet()) {
             if (written >= MAX_SAVED_CHUNKS) break;
             Score s = e.getValue();
-            if (s.heat() <= 0 && !s.ungrown()) continue; // nothing worth remembering
+            if (s.heat() <= 0 && !s.ungrown()) continue;
 
             ChunkPos cp = new ChunkPos(e.getKey());
             JsonObject o = new JsonObject();
@@ -1359,22 +1119,13 @@ public class SusChunkFinder extends Module {
             try {
                 Files.createDirectories(SAVE_FILE.getParent());
                 Files.writeString(SAVE_FILE, json);
-            } catch (IOException ignored) {
-                // saving is best effort
-            }
+            } catch (IOException ignored) {}
         };
 
         if (async) CompletableFuture.runAsync(write);
         else write.run();
     }
 
-    // ------------------------------------------------------------- live events
-
-    /**
-     * Diff two bud snapshots of one chunk. A bud that grew exactly one stage at the same
-     * spot, or that vanished, is an event. Growth near you is your own doing (you tick
-     * those chunks), and vanishing buds next to you are you mining, so both are ignored.
-     */
     private void recordEvents(long key, List<Bud> before, List<Bud> now) {
         Map<Long, Integer> old = new HashMap<>();
         for (Bud b : before) old.put(BlockPos.asLong(b.x(), b.y(), b.z()), b.stage());
@@ -1390,7 +1141,6 @@ public class SusChunkFinder extends Module {
             if (farChunk && was != null && b.stage() == was + 1) events++;
         }
 
-        // getX/getY/getZ instead of getPos(): that method was renamed in newer mappings.
         double meX = mc.player.getX();
         double meY = mc.player.getY();
         double meZ = mc.player.getZ();
@@ -1412,7 +1162,7 @@ public class SusChunkFinder extends Module {
 
         if (debug.get()) {
             ChunkPos cp = new ChunkPos(key);
-            info("%d live event(s) at chunk %d, %d", events, cp.x, cp.z);
+            print("%d live event(s) at chunk %d, %d", events, cp.x, cp.z);
         }
     }
 
@@ -1420,8 +1170,6 @@ public class SusChunkFinder extends Module {
         int configured = ignoreNear.get();
         return configured > 0 ? configured : mc.options.getSimulationDistance().getValue();
     }
-
-    // ---------------------------------------------------------- heat / veto map
 
     private void applyScore(long key, Score next) {
         Score old = next == null ? scores.remove(key) : scores.put(key, next);
@@ -1449,7 +1197,6 @@ public class SusChunkFinder extends Module {
         }
     }
 
-    /** Rebuild flagged chunks, tiers, geode markers and the hottest chunk of every patch. */
     private void recompute() {
         Map<Long, Integer> candidates = new HashMap<>();
         Map<Long, Integer> tiers = new HashMap<>();
@@ -1458,7 +1205,6 @@ public class SusChunkFinder extends Module {
         int neighbours = minScanned.get();
         boolean relax = relaxEmpty.get();
 
-        // 1) Chunk heat with veto.
         for (Map.Entry<Long, Integer> e : heat.entrySet()) {
             long key = e.getKey();
 
@@ -1476,7 +1222,6 @@ public class SusChunkFinder extends Module {
             candidates.put(key, e.getValue());
         }
 
-        // 2) Geodes: GROWN and HARVESTED tiers bypass the veto, they are geode level evidence.
         markers.clear();
         if (geodeTiers.get()) {
             if (geodesStale && tick - geodesAtTick >= GEODE_INTERVAL_TICKS) {
@@ -1484,7 +1229,7 @@ public class SusChunkFinder extends Module {
                 geodesAtTick = tick;
                 geodesStale = false;
             } else if (geodesStale) {
-                dirty = true; // try again once the interval passed
+                dirty = true;
             }
 
             for (Geode g : geodes) {
@@ -1504,7 +1249,6 @@ public class SusChunkFinder extends Module {
             }
         }
 
-        // 3) Live activity.
         if (liveEvents.get() && !eventLog.isEmpty()) {
             long limit = System.currentTimeMillis() - eventWindow.get() * 60_000L;
             int min = minEvents.get();
@@ -1532,8 +1276,6 @@ public class SusChunkFinder extends Module {
         flagged.clear();
         flagged.putAll(hottestOnly.get() ? peaks : candidates);
 
-        // A flagged chunk stays flagged: walking up to it brings new light data, neighbours
-        // and natural geodes into the picture, which must not wipe a mark that was seen.
         if (keepFlagged.get()) {
             for (Map.Entry<Long, Integer> e : flagged.entrySet()) sticky.merge(e.getKey(), e.getValue(), Math::max);
             for (Map.Entry<Long, Integer> e : sticky.entrySet()) flagged.putIfAbsent(e.getKey(), e.getValue());
@@ -1545,17 +1287,17 @@ public class SusChunkFinder extends Module {
             for (Marker m : markers) {
                 String id = m.tier() + ":" + ((int) Math.floor(m.x()) >> 4) + ":" + ((int) Math.floor(m.z()) >> 4);
                 if (announcedGeodes.add(id)) {
-                    info("%s geode at %d, %d, %d (%d)", TIER_NAME[m.tier()],
+                    print("%s geode at %d, %d, %d (%d)", TIER_NAME[m.tier()],
                         (int) Math.floor(m.x()), (int) Math.floor(m.y()), (int) Math.floor(m.z()), m.value());
                 }
             }
 
             for (Map.Entry<Long, Integer> e : peaks.entrySet()) {
                 int tier = tiers.getOrDefault(e.getKey(), 0);
-                if (tier == TIER_GROWN || tier == TIER_HARVESTED) continue; // the geode message covers it
+                if (tier == TIER_GROWN || tier == TIER_HARVESTED) continue;
                 if (announced.add(e.getKey())) {
                     ChunkPos cp = new ChunkPos(e.getKey());
-                    info("%s chunk at %d, %d (heat %d)", tier == TIER_ACTIVE ? "Active" : "Suspicious",
+                    print("%s chunk at %d, %d (heat %d)", tier == TIER_ACTIVE ? "Active" : "Suspicious",
                         cp.x * 16 + 8, cp.z * 16 + 8, e.getValue());
                 }
             }
@@ -1574,7 +1316,6 @@ public class SusChunkFinder extends Module {
         return count;
     }
 
-    /** Connected patches (4-neighbour). Keeps exactly one hottest chunk per patch. */
     private Map<Long, Integer> hottestPerPatch(Map<Long, Integer> chunks) {
         Map<Long, Integer> out = new HashMap<>();
         Set<Long> seen = new HashSet<>();
@@ -1611,9 +1352,6 @@ public class SusChunkFinder extends Module {
         return out;
     }
 
-    // ------------------------------------------------------------------ geodes
-
-    /** Link every bud with all buds within 5 blocks (union-find over a spatial hash). */
     private List<Geode> computeGeodes() {
         List<Bud> all = new ArrayList<>();
         for (List<Bud> list : emitters.values()) all.addAll(list);
@@ -1658,14 +1396,13 @@ public class SusChunkFinder extends Module {
         List<Geode> out = new ArrayList<>();
         for (List<Bud> group : groups.values()) {
             int[] stage = new int[5];
-            Map<Long, Integer> chunks = new HashMap<>();
+            Map<Long, Integer> chunkCounts = new HashMap<>();
             for (Bud b : group) {
                 stage[b.stage()]++;
-                chunks.merge(ChunkPos.toLong(b.x() >> 4, b.z() >> 4), 1, Integer::sum);
+                chunkCounts.merge(ChunkPos.toLong(b.x() >> 4, b.z() >> 4), 1, Integer::sum);
             }
-            // Noise filter: a real geode has at least one big bud or three medium ones.
             if (stage[3] + stage[4] == 0 && stage[2] < 3) continue;
-            out.add(new Geode(group, chunks, stage[1], stage[2], stage[3], stage[4]));
+            out.add(new Geode(group, chunkCounts, stage[1], stage[2], stage[3], stage[4]));
         }
         return out;
     }
@@ -1694,10 +1431,6 @@ public class SusChunkFinder extends Module {
         return ((long) x & 0x1FFFFFL) | (((long) y & 0x1FFFFFL) << 21) | (((long) z & 0x1FFFFFL) << 42);
     }
 
-    /**
-     * Least-squares sphere fit to the buds (a geode is a hollow sphere). With fewer than
-     * eight buds, or an implausible result, the plain centroid is returned.
-     */
     private static double[] fitCenter(List<Bud> buds) {
         int n = buds.size();
         double mx = 0, my = 0, mz = 0;
@@ -1712,7 +1445,6 @@ public class SusChunkFinder extends Module {
         double[] centroid = {mx, my, mz};
         if (n < 8) return centroid;
 
-        // |p - c|^2 = r^2 with p centred on the centroid: 2 p.c + k = |p|^2, k = r^2 - |c|^2.
         double[][] a = new double[4][5];
         for (Bud b : buds) {
             double px = b.x() + 0.5 - mx;
@@ -1739,7 +1471,6 @@ public class SusChunkFinder extends Module {
         return new double[]{mx + sol[0], my + sol[1], mz + sol[2]};
     }
 
-    /** Gaussian elimination with partial pivoting on a 4x5 augmented matrix. */
     private static double[] solve(double[][] m) {
         for (int col = 0; col < 4; col++) {
             int pivot = col;
@@ -1761,10 +1492,8 @@ public class SusChunkFinder extends Module {
         return new double[]{m[0][4] / m[0][0], m[1][4] / m[1][1], m[2][4] / m[2][2], m[3][4] / m[3][3]};
     }
 
-    // ---------------------------------------------------------------- rendering
-
     @EventHandler
-    private void onRender(Render3DEvent event) {
+    public void onRender(Render3DEvent event) {
         if (mc.world == null || mc.player == null) return;
         if (flagged.isEmpty() && deepslate.isEmpty()) return;
 
@@ -1772,12 +1501,12 @@ public class SusChunkFinder extends Module {
         int pcz = mc.player.getChunkPos().z;
         int range = renderRange.get();
 
-        double y = baseY();
+        double y = renderY.get();
         double slabTop = y + Math.max(0.10, renderHeight.get() * 0.10);
         double wallTop = y + Math.max(borderHeight.get(), slabTop - y);
 
-        Color fill = fillColor.get();
-        Color line = lineColor.get();
+        SettingColor fill = fillColor.get();
+        SettingColor line = lineColor.get();
 
         for (long key : flagged.keySet()) {
             ChunkPos cp = new ChunkPos(key);
@@ -1788,78 +1517,62 @@ public class SusChunkFinder extends Module {
             double x2 = x1 + 16.0;
             double z2 = z1 + 16.0;
 
-            // Thin filled cell, one per chunk.
-            event.renderer.boxSides(x1, y, z1, x2, slabTop, z2, fill, 0);
+            Box box = new Box(x1, y, z1, x2, slabTop, z2);
+            Render3DUtils.drawBox(box, fill, line, ShapeMode.Sides);
 
             if (!outline.get()) continue;
 
-            // Border only where the neighbouring chunk is not flagged, so a patch
-            // reads as one merged shape instead of a grid.
-            if (!flagged.containsKey(ChunkPos.toLong(cp.x, cp.z - 1))) edge(event, x1, z1, x2, z1, y, wallTop, fill, line);
-            if (!flagged.containsKey(ChunkPos.toLong(cp.x, cp.z + 1))) edge(event, x1, z2, x2, z2, y, wallTop, fill, line);
-            if (!flagged.containsKey(ChunkPos.toLong(cp.x - 1, cp.z))) edge(event, x1, z1, x1, z2, y, wallTop, fill, line);
-            if (!flagged.containsKey(ChunkPos.toLong(cp.x + 1, cp.z))) edge(event, x2, z1, x2, z2, y, wallTop, fill, line);
+            if (!flagged.containsKey(ChunkPos.toLong(cp.x, cp.z - 1))) edge(x1, z1, x2, z1, y, wallTop, fill, line);
+            if (!flagged.containsKey(ChunkPos.toLong(cp.x, cp.z + 1))) edge(x1, z2, x2, z2, y, wallTop, fill, line);
+            if (!flagged.containsKey(ChunkPos.toLong(cp.x - 1, cp.z))) edge(x1, z1, x1, z2, y, wallTop, fill, line);
+            if (!flagged.containsKey(ChunkPos.toLong(cp.x + 1, cp.z))) edge(x2, z1, x2, z2, y, wallTop, fill, line);
         }
 
         if (rotatedDeepslate.get() && !deepslate.isEmpty()) {
             int drawn = 0;
             int cap = maxSlateBoxes.get();
-            Color slate = slateColor.get();
+            SettingColor slate = slateColor.get();
             slates:
             for (Map.Entry<Long, List<BlockPos>> e : deepslate.entrySet()) {
                 ChunkPos cp = new ChunkPos(e.getKey());
                 if (Math.max(Math.abs(cp.x - pcx), Math.abs(cp.z - pcz)) > range) continue;
                 for (BlockPos p : e.getValue()) {
                     if (drawn++ >= cap) break slates;
-                    event.renderer.box(p.getX(), p.getY(), p.getZ(), p.getX() + 1, p.getY() + 1, p.getZ() + 1,
-                        slate, slate, ShapeMode.Lines, 0);
+                    Render3DUtils.drawBox(new Box(p.getX(), p.getY(), p.getZ(), p.getX() + 1, p.getY() + 1, p.getZ() + 1), null, slate, ShapeMode.Lines);
                 }
             }
         }
 
         if (tracers.get()) {
             double[] start = tracerStart();
-            double sx = start[0];
-            double sy = start[1];
-            double sz = start[2];
+            Vec3d s = new Vec3d(start[0], start[1], start[2]);
 
             for (long key : peaks.keySet()) {
                 ChunkPos cp = new ChunkPos(key);
                 if (Math.max(Math.abs(cp.x - pcx), Math.abs(cp.z - pcz)) > range) continue;
-                event.renderer.line(sx, sy, sz, cp.x * 16.0 + 8.0, slabTop, cp.z * 16.0 + 8.0, line);
+                Vec3d target = new Vec3d(cp.x * 16.0 + 8.0, slabTop, cp.z * 16.0 + 8.0);
+                Render3DUtils.drawLine(s, target, line, 1.5f);
             }
         }
     }
 
-    private static boolean inRenderRange(Marker m, int pcx, int pcz, int range) {
-        int cx = (int) Math.floor(m.x()) >> 4;
-        int cz = (int) Math.floor(m.z()) >> 4;
-        return Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz)) <= range;
-    }
-
-    private void edge(Render3DEvent event, double ax, double az, double bx, double bz,
-                      double y, double top, Color fill, Color line) {
-        // Translucent wall (thin box) plus crisp lines on the top and bottom edge.
+    private void edge(double ax, double az, double bx, double bz, double y, double top, SettingColor fill, SettingColor line) {
         if (top - y > 0.2) {
             double t = 0.05;
-            event.renderer.boxSides(
+            Box wall = new Box(
                 Math.min(ax, bx) - (ax == bx ? t : 0), y, Math.min(az, bz) - (az == bz ? t : 0),
-                Math.max(ax, bx) + (ax == bx ? t : 0), top, Math.max(az, bz) + (az == bz ? t : 0),
-                fill, 0
+                Math.max(ax, bx) + (ax == bx ? t : 0), top, Math.max(az, bz) + (az == bz ? t : 0)
             );
+            Render3DUtils.drawBox(wall, fill, line, ShapeMode.Sides);
         }
-        event.renderer.line(ax, y, az, bx, y, bz, line);
-        event.renderer.line(ax, top, az, bx, top, bz, line);
-        event.renderer.line(ax, y, az, ax, top, az, line);
-        event.renderer.line(bx, y, bz, bx, top, bz, line);
+        Render3DUtils.drawLine(new Vec3d(ax, y, az), new Vec3d(bx, y, bz), line, 1.5f);
+        Render3DUtils.drawLine(new Vec3d(ax, top, az), new Vec3d(bx, top, bz), line, 1.5f);
+        Render3DUtils.drawLine(new Vec3d(ax, y, az), new Vec3d(ax, top, az), line, 1.5f);
+        Render3DUtils.drawLine(new Vec3d(bx, y, bz), new Vec3d(bx, top, bz), line, 1.5f);
     }
 
-    /** Tracer origin slightly in front of the camera, built from yaw/pitch so it needs no version specific vector call. */
     private double[] tracerStart() {
-        // Meteor refreshes RenderUtils.center every frame from the real camera: no sliding.
-        var center = RenderUtils.center;
-        if (center != null) return new double[]{center.x, center.y, center.z};
-
+        if (mc.player == null) return new double[]{0, 0, 0};
         double yaw = Math.toRadians(mc.player.getYaw());
         double pitch = Math.toRadians(mc.player.getPitch());
         double cosPitch = Math.cos(pitch);
@@ -1872,12 +1585,6 @@ public class SusChunkFinder extends Module {
             mc.player.getZ() + lz * 0.6
         };
     }
-
-    private double baseY() {
-        return renderY.get();
-    }
-
-    // ------------------------------------------------------------------ helpers
 
     private int effectiveRange() {
         int configured = scanRange.get();
@@ -1904,7 +1611,6 @@ public class SusChunkFinder extends Module {
         return brand != null && brand.contains("DonutFolia");
     }
 
-    /** Changing any of these invalidates the stored scores, so everything is rescanned. */
     private int signature() {
         return Objects.hash(method.get().ordinal(), usePalette(), spreadRadius.get(), effectiveVetoRadius(),
             minY.get(), maxY.get(), useSources.get(), useEdges.get(), edgeCellsPerHeat.get(),
@@ -1950,10 +1656,6 @@ public class SusChunkFinder extends Module {
     private static boolean isGrowthState(BlockState state) {
         Block block = state.getBlock();
         return block == Blocks.AMETHYST_CLUSTER || isBud(block);
-    }
-
-    private static boolean isGrowthRelated(BlockState state) {
-        return state.getBlock() == Blocks.BUDDING_AMETHYST || isGrowthState(state);
     }
 
     private void clearRuntime() {

@@ -1,23 +1,25 @@
 {
   "schemaVersion": 1,
-  "id": "maza-addon",
-  "version": "3.0.0",
-  "name": "Maza Addon",
-  "description": "Maza addon for Meteor",
+  "id": "maza",
+  "version": "${version}",
+  "name": "Maza",
+  "description": "Maza - standalone Minecraft client",
   "authors": ["masqqg"],
   "contact": {},
   "license": "MIT",
   "icon": "",
   "environment": "client",
   "entrypoints": {
-    "meteor": [
-      "com.maza.addon.Addon"
+    "client": [
+      "com.maza.client.MazaClient"
     ]
   },
+  "mixins": [
+    "maza.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.18.0",
     "minecraft": "~1.21.11",
-    "java": ">=21",
-    "meteor-client": "*"
+    "java": ">=21"
   }
 }
