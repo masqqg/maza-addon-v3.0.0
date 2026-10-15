@@ -7,6 +7,7 @@ import com.maza.client.module.modules.client.ClickGUI;
 import com.maza.client.module.modules.client.HUD;
 import com.maza.client.module.modules.misc.AntiVanish;
 import com.maza.client.module.modules.render.StorageESP;
+import com.maza.client.module.modules.world.NetheriteFinderPlus;
 import com.maza.client.module.modules.world.PlayerBypass;
 import com.maza.client.module.modules.world.PrimeChunkFinder;
 import com.maza.client.module.modules.world.SpawnerFlag;
@@ -46,6 +47,7 @@ public class MazaClient implements ClientModInitializer {
             new SpawnerFlag(),
             new SusChunkFinder(),
             new PrimeChunkFinder(),
+            new NetheriteFinderPlus(),
 
             // Misc
             new AntiVanish()
