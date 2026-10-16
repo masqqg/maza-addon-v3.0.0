@@ -91,10 +91,8 @@ public class ModuleButton {
             if (button == 0) { // Left click
                 module.toggle();
                 return true;
-            } else if (button == 1) { // Right click
-                if (!settingComponents.isEmpty()) {
-                    expanded = !expanded;
-                }
+            } else if (button == 1) { // Right click - open settings
+                expanded = !expanded;
                 return true;
             } else if (button == 2) { // Middle click: bind key
                 binding = true;

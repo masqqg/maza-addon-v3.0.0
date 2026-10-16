@@ -45,14 +45,14 @@ public class ClickGuiScreen extends Screen {
         
         // Header background with subtle blur effect
         context.fill(0, 0, width, 24, 0xDD0A0A0F);
-        // Gradient accent
+        // Gradient accent - ocean blue
         for (int i = 0; i < 3; i++) {
             int alpha = 255 - (i * 85);
-            context.fill(0, 23 - i, width, 24 - i, 0x7C4DFF | (alpha << 24));
+            context.fill(0, 23 - i, width, 24 - i, 0x2E86AB | (alpha << 24));
         }
         
-        String header = "§dMaza";
-        context.drawTextWithShadow(textRenderer, header, 12, 6, 0xFF7C4DFF);
+        String header = "§bMaza";
+        context.drawTextWithShadow(textRenderer, header, 12, 6, 0xFF2E86AB);
         context.drawTextWithShadow(textRenderer, " Client v3.0.0", 12 + textRenderer.getWidth(header), 6, 0xFFFFFFFF);
         
         int statsX = width - textRenderer.getWidth("§a" + totalEnabled + "§7/§f" + totalModules) - 12;
