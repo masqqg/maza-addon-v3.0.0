@@ -147,7 +147,7 @@ public class HUD extends Module {
     }
 
     private void renderWatermark(DrawContext context) {
-        String title = "Guide " + MazaClient.MOD_NAME;
+        String title = MazaClient.MOD_NAME;
         String version = "v" + MazaClient.MOD_VERSION;
         int mainColor = primaryColor.get().getPacked();
 
