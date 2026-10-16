@@ -69,7 +69,6 @@ public class MazaClient implements ClientModInitializer {
         // Save config on JVM shutdown
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             ConfigManager.INSTANCE.save();
-            FriendManager.INSTANCE.save();
         }));
 
         LOG.info("{} initialized with {} modules.", MOD_NAME, moduleManager.getModules().size());
