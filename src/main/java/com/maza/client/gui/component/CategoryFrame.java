@@ -28,6 +28,14 @@ public class CategoryFrame {
             buttons.add(new ModuleButton(module, this));
         }
     }
+    
+    public int getEnabledCount() {
+        int count = 0;
+        for (ModuleButton btn : buttons) {
+            if (btn.getModule().isEnabled()) count++;
+        }
+        return count;
+    }
 
     public void render(DrawContext context, int mouseX, int mouseY) {
         MinecraftClient mc = MinecraftClient.getInstance();
