@@ -9,7 +9,6 @@
     "ClientConnectionMixin",
     "InGameHudMixin",
     "WorldRendererMixin",
-    "ChatMixin"
   ],
   "injectors": {
     "defaultRequire": 1
