@@ -2,10 +2,14 @@ package com.maza.client;
 
 import com.maza.client.config.ConfigManager;
 import com.maza.client.event.EventManager;
+import com.maza.client.module.CommandManager;
 import com.maza.client.module.ModuleManager;
 import com.maza.client.module.modules.client.ClickGUI;
+import com.maza.client.module.modules.client.FriendManager;
 import com.maza.client.module.modules.client.HUD;
+import com.maza.client.module.modules.client.NotificationManager;
 import com.maza.client.module.modules.misc.AntiVanish;
+import com.maza.client.module.modules.render.RegionMapHud;
 import com.maza.client.module.modules.render.RegionMapModule;
 import com.maza.client.module.modules.render.StorageESP;
 import com.maza.client.module.modules.world.NetheriteFinderPlus;
@@ -33,16 +37,20 @@ public class MazaClient implements ClientModInitializer {
         // Core systems
         EventManager eventManager = EventManager.INSTANCE;
         ModuleManager moduleManager = ModuleManager.INSTANCE;
+        CommandManager commandManager = CommandManager.INSTANCE;
 
         // Register all modules
         moduleManager.register(
             // Client
             new HUD(),
             new ClickGUI(),
+            new NotificationManager(),
+            new FriendManager(),
 
             // Render
             new StorageESP(),
             new RegionMapModule(),
+            new RegionMapHud(),
 
             // World
             new PlayerBypass(),
@@ -59,7 +67,9 @@ public class MazaClient implements ClientModInitializer {
         ConfigManager.INSTANCE.load();
 
         // Save config on JVM shutdown
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> ConfigManager.INSTANCE.save()));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            ConfigManager.INSTANCE.save();
+        }));
 
         LOG.info("{} initialized with {} modules.", MOD_NAME, moduleManager.getModules().size());
     }

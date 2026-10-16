@@ -24,9 +24,15 @@ public class SettingComponent {
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
 
-        // Background
-        int bg = hovered ? 0xFF22222D : 0xFF181820;
-        context.fill(x, y, x + width, y + height, bg);
+        // Background with smooth transition
+        int bg = hovered ? 0xFF252530 : 0xFF181820;
+        context.fill(x + 1, y + 1, x + width - 1, y + height - 1, bg);
+        
+        // Subtle highlight border
+        if (hovered) {
+            context.fill(x, y, x + width, y + 1, 0xFF3A3A4A);
+            context.fill(x, y + height - 1, x + width, y + height, 0xFF3A3A4A);
+        }
 
         if (setting instanceof BoolSetting boolSetting) {
             boolean val = boolSetting.get();
@@ -85,19 +91,20 @@ public class SettingComponent {
                 enumSetting.set(values[nextIndex]);
                 return true;
             } else if (setting instanceof ColorSetting colorSetting) {
-                // Cycle simple colors on click
+                // Rastgele canlı renk seç
+                java.util.Random rand = new java.util.Random();
+                int r = 100 + rand.nextInt(155);
+                int g = 100 + rand.nextInt(155);
+                int b = 100 + rand.nextInt(155);
                 SettingColor cur = colorSetting.get();
-                if (cur.r == 255 && cur.g == 255 && cur.b == 255) {
-                    colorSetting.set(new SettingColor(124, 77, 255, cur.a)); // Purple
-                } else if (cur.r == 124) {
-                    colorSetting.set(new SettingColor(255, 60, 60, cur.a)); // Red
-                } else if (cur.r == 255 && cur.g == 60) {
-                    colorSetting.set(new SettingColor(60, 255, 60, cur.a)); // Green
-                } else if (cur.g == 255) {
-                    colorSetting.set(new SettingColor(60, 180, 255, cur.a)); // Blue
-                } else {
-                    colorSetting.set(new SettingColor(255, 255, 255, cur.a)); // White
-                }
+                colorSetting.set(new SettingColor(r, g, b, cur.a));
+                return true;
+            }
+        } else if (button == 1) { // Right click - special handling
+            if (setting instanceof ColorSetting colorSetting) {
+                // Sağ tık ile RGB'yi sıfırla
+                SettingColor cur = colorSetting.get();
+                colorSetting.set(new SettingColor(255, 255, 255, cur.a));
                 return true;
             }
         }
