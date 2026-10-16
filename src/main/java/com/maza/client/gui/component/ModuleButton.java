@@ -44,8 +44,19 @@ public class ModuleButton {
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + 18;
 
-        int bgColor = module.isEnabled() ? (hovered ? 0xFF8354FF : 0xFF7C4DFF) : (hovered ? 0xFF2A2A38 : 0xFF20202A);
-        context.fill(x, y, x + width, y + 18, bgColor);
+        // Smooth background with hover effect
+        int baseColor = module.isEnabled() ? 0xFF7C4DFF : 0xFF20202A;
+        int hoverColor = module.isEnabled() ? 0xFF8354FF : 0xFF2A2A38;
+        int bgColor = hovered ? hoverColor : baseColor;
+        
+        // Subtle gradient background
+        context.fill(x + 1, y + 1, x + width - 1, y + 17, bgColor);
+        
+        // Border glow when enabled
+        if (module.isEnabled()) {
+            context.fill(x, y, x + width, y + 1, 0xFF7C4DFF);
+            context.fill(x, y + 17, x + width, y + 18, 0xFF7C4DFF);
+        }
 
         String title = binding ? "§bPress key..." : (module.isEnabled() ? "§f" : "§7") + module.getName();
         context.drawTextWithShadow(mc.textRenderer, title, x + 5, y + 5, 0xFFFFFFFF);

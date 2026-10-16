@@ -28,29 +28,35 @@ public class ClickGuiScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        // Draw slight background darkening
-        context.fill(0, 0, width, height, 0x66000000);
-
-        // Header info bar
-        String header = "§dMaza Client §7v3.0.0";
-        int totalEnabled = 0;
-        int totalModules = 0;
-        for (CategoryFrame frame : FRAMES) {
-            // Count via module manager
+        // Smooth dark background with subtle gradient
+        for (int i = 0; i < height; i += 2) {
+            int alpha = 100 + (i * 2);
+            if (alpha > 180) alpha = 180;
+            context.fill(0, i, width, i + 2, 0x000000 | (alpha << 24));
         }
-        
-        // Calculate stats
+
+        // Header with professional styling
         com.maza.client.module.ModuleManager mm = com.maza.client.module.ModuleManager.INSTANCE;
-        totalModules = mm.getModules().size();
+        int totalModules = mm.getModules().size();
+        int totalEnabled = 0;
         for (com.maza.client.module.Module m : mm.getModules()) {
             if (m.isEnabled()) totalEnabled++;
         }
         
-        context.fill(0, 0, width, 16, 0xDD101015);
-        context.fill(0, 15, width, 16, 0xFF7C4DFF);
-        context.drawTextWithShadow(textRenderer, header, 8, 4, 0xFFFFFFFF);
-        int statsX = width - textRenderer.getWidth("§f" + totalEnabled + "/" + totalModules + " modüller") - 8;
-        context.drawTextWithShadow(textRenderer, "§f" + totalEnabled + "/" + totalModules + " modüller", statsX, 4, 0xFFFFFFFF);
+        // Header background with subtle blur effect
+        context.fill(0, 0, width, 24, 0xDD0A0A0F);
+        // Gradient accent
+        for (int i = 0; i < 3; i++) {
+            int alpha = 255 - (i * 85);
+            context.fill(0, 23 - i, width, 24 - i, 0x7C4DFF | (alpha << 24));
+        }
+        
+        String header = "§dMaza";
+        context.drawTextWithShadow(textRenderer, header, 12, 6, 0xFF7C4DFF);
+        context.drawTextWithShadow(textRenderer, " Client v3.0.0", 12 + textRenderer.getWidth(header), 6, 0xFFFFFFFF);
+        
+        int statsX = width - textRenderer.getWidth("§a" + totalEnabled + "§7/§f" + totalModules) - 12;
+        context.drawTextWithShadow(textRenderer, "§a" + totalEnabled + "§7/§f" + totalModules, statsX, 6, 0xFFFFFFFF);
 
         for (CategoryFrame frame : FRAMES) {
             frame.render(context, mouseX, mouseY);

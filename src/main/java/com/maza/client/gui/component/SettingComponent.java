@@ -24,9 +24,15 @@ public class SettingComponent {
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
 
-        // Background
-        int bg = hovered ? 0xFF22222D : 0xFF181820;
-        context.fill(x, y, x + width, y + height, bg);
+        // Background with smooth transition
+        int bg = hovered ? 0xFF252530 : 0xFF181820;
+        context.fill(x + 1, y + 1, x + width - 1, y + height - 1, bg);
+        
+        // Subtle highlight border
+        if (hovered) {
+            context.fill(x, y, x + width, y + 1, 0xFF3A3A4A);
+            context.fill(x, y + height - 1, x + width, y + height, 0xFF3A3A4A);
+        }
 
         if (setting instanceof BoolSetting boolSetting) {
             boolean val = boolSetting.get();

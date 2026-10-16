@@ -40,11 +40,17 @@ public class CategoryFrame {
     public void render(DrawContext context, int mouseX, int mouseY) {
         MinecraftClient mc = MinecraftClient.getInstance();
 
-        // Header
-        context.fill(x, y, x + width, y + height, 0xEE14141A);
-        context.fill(x, y + height - 2, x + width, y + height, 0xFF7C4DFF); // Accent line under header
+        // Header with gradient background
+        int bgColor = 0xEE14141A;
+        context.fill(x, y, x + width, y + height, bgColor);
+        
+        // Gradient accent line
+        for (int i = 0; i < 2; i++) {
+            int alpha = 255 - (i * 127);
+            context.fill(x, y + height - 2 + i, x + width, y + height + i, 0x7C4DFF | (alpha << 24));
+        }
 
-        String title = "§d" + category.getName() + (open ? " §7[-]" : " §7[+]");
+        String title = "§d" + category.getName() + " §7" + buttons.size() + " modül";
         context.drawTextWithShadow(mc.textRenderer, title, x + 5, y + 5, 0xFFFFFFFF);
 
         if (open) {
