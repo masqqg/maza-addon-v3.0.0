@@ -132,10 +132,31 @@ public class CommandManager {
         commands.put(name.toLowerCase(), new Command(name, description, handler));
     }
 
-    @EventHandler
-    private void onChatMessage() {}
-
-    private void onMessageSend(String message, boolean allowExecute, String sender) {
+    public boolean handleCommand(String message) {
+        if (message == null) return false;
+        String content = message.trim();
+        if (content.startsWith("/") || content.startsWith(".")) {
+            content = content.substring(1).trim();
+        }
+        if (content.isEmpty()) return false;
+        
+        String[] args = content.split("\\s+");
+        String commandName = args[0].toLowerCase();
+        
+        if (commands.containsKey(commandName)) {
+            commands.get(commandName).execute(args);
+            return true;
+        }
+        
+        Module module = ModuleManager.INSTANCE.getByName(content);
+        if (module != null) {
+            module.toggle();
+            NotificationManager.send("Module", module.getName() + " toggled", NotificationType.INFO);
+            return true;
+        }
+        
+        return false;
+    }
         if (message == null || !message.startsWith("/") || message.length() <= 1) return;
         String[] args = message.substring(1).trim().split("\\s+");
         if (args.length == 0) return;
