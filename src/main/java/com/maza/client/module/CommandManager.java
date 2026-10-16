@@ -157,20 +157,6 @@ public class CommandManager {
         
         return false;
     }
-        if (message == null || !message.startsWith("/") || message.length() <= 1) return;
-        String[] args = message.substring(1).trim().split("\\s+");
-        if (args.length == 0) return;
-        String commandName = args[0].toLowerCase();
-        if (commands.containsKey(commandName)) {
-            commands.get(commandName).execute(args);
-            return;
-        }
-        Module module = ModuleManager.INSTANCE.getByName(message.substring(1));
-        if (module != null) {
-            module.toggle();
-            NotificationManager.send("Module", module.getName() + " toggled", NotificationType.INFO);
-        }
-    }
 
     private static class Command {
         private final String name;
