@@ -85,19 +85,20 @@ public class SettingComponent {
                 enumSetting.set(values[nextIndex]);
                 return true;
             } else if (setting instanceof ColorSetting colorSetting) {
-                // Cycle simple colors on click
+                // Rastgele canlı renk seç
+                java.util.Random rand = new java.util.Random();
+                int r = 100 + rand.nextInt(155);
+                int g = 100 + rand.nextInt(155);
+                int b = 100 + rand.nextInt(155);
                 SettingColor cur = colorSetting.get();
-                if (cur.r == 255 && cur.g == 255 && cur.b == 255) {
-                    colorSetting.set(new SettingColor(124, 77, 255, cur.a)); // Purple
-                } else if (cur.r == 124) {
-                    colorSetting.set(new SettingColor(255, 60, 60, cur.a)); // Red
-                } else if (cur.r == 255 && cur.g == 60) {
-                    colorSetting.set(new SettingColor(60, 255, 60, cur.a)); // Green
-                } else if (cur.g == 255) {
-                    colorSetting.set(new SettingColor(60, 180, 255, cur.a)); // Blue
-                } else {
-                    colorSetting.set(new SettingColor(255, 255, 255, cur.a)); // White
-                }
+                colorSetting.set(new SettingColor(r, g, b, cur.a));
+                return true;
+            }
+        } else if (button == 1) { // Right click - special handling
+            if (setting instanceof ColorSetting colorSetting) {
+                // Sağ tık ile RGB'yi sıfırla
+                SettingColor cur = colorSetting.get();
+                colorSetting.set(new SettingColor(255, 255, 255, cur.a));
                 return true;
             }
         }
