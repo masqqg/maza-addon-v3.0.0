@@ -117,7 +117,7 @@ public class SusChunkFinder extends Module {
         .name("min-y").defaultValue(-64).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
     public final IntSetting maxY = addSetting(new IntSetting.Builder()
-        .name("max-y").defaultValue(30).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
+        .name("max-y").defaultValue(80).min(-64).max(320).sliderMin(-64).sliderMax(320).build());
 
     public final BoolSetting useSources = addSetting(new BoolSetting.Builder()
         .name("glow-sources").defaultValue(true).build());
