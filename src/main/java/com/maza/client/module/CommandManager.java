@@ -1,10 +1,11 @@
 package com.maza.client.module;
 
+import com.maza.client.event.EventHandler;
+import com.maza.client.event.KeyEvent;
 import com.maza.client.module.modules.client.FriendManager;
 import com.maza.client.module.modules.client.NotificationManager;
 import com.maza.client.module.modules.client.notifications.NotificationType;
 import com.maza.client.utils.ChatUtils;
-import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.minecraft.client.MinecraftClient;
 
 import java.util.Arrays;
@@ -20,10 +21,10 @@ public class CommandManager {
     private final Map<String, Command> commands = new HashMap<>();
     
     private CommandManager() {
+        EventManager.INSTANCE.subscribe(this);
         registerCommands();
-        ClientSendMessageEvents.MODIFY.register(this::onMessageSend);
     }
-    
+
     private void registerCommands() {
         register("help", "Shows available commands", args -> {
             ChatUtils.info("Available commands:");
@@ -129,29 +130,26 @@ public class CommandManager {
     public void register(String name, String description, Consumer<String[]> handler) {
         commands.put(name.toLowerCase(), new Command(name, description, handler));
     }
-    
+
+    @EventHandler
+    private void onChatMessage() {}
+
     private void onMessageSend(String message, boolean allowExecute, String sender) {
-        if (!message.startsWith("/") || message.length() <= 1) return;
-        
+        if (message == null || !message.startsWith("/") || message.length() <= 1) return;
         String[] args = message.substring(1).trim().split("\\s+");
         if (args.length == 0) return;
-        
         String commandName = args[0].toLowerCase();
-        
         if (commands.containsKey(commandName)) {
             commands.get(commandName).execute(args);
             return;
         }
-        
-        // Try to find a module by name and toggle it
         Module module = ModuleManager.INSTANCE.getByName(message.substring(1));
         if (module != null) {
             module.toggle();
             NotificationManager.send("Module", module.getName() + " toggled", NotificationType.INFO);
-            MinecraftClient.getInstance().inGameHud.getChatHud().addMessage(com.maza.client.utils.ChatUtils.info("Toggled"));
         }
     }
-    
+
     private static class Command {
         private final String name;
         private final String description;
