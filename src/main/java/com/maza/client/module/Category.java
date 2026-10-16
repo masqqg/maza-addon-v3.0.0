@@ -5,6 +5,7 @@ public enum Category {
     MOVEMENT("Movement"),
     RENDER("Render"),
     WORLD("World"),
+    CLIENT("Client"),
     MISC("Misc");
 
     private final String name;

@@ -1,6 +1,7 @@
 package com.maza.client.module;
 
 import com.maza.client.event.EventHandler;
+import com.maza.client.event.EventManager;
 import com.maza.client.event.KeyEvent;
 import com.maza.client.module.modules.client.FriendManager;
 import com.maza.client.module.modules.client.NotificationManager;

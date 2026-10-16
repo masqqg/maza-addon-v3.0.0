@@ -244,13 +244,13 @@ public class HUD extends Module {
                 case EAST -> "+X";
                 default -> "";
             };
-            lines.add("§7Facing: §f" + dir.getName().toUpperCase() + " §7(" + axis + ")");
+            lines.add("§7Facing: §f" + dir.name() + " §7(" + axis + ")");
         }
 
         if (showSpeed.get() && mc.player != null) {
-            double dx = mc.player.getX() - mc.player.prevX;
-            double dz = mc.player.getZ() - mc.player.prevZ;
-            double bps = Math.sqrt(dx * dx + dz * dz) * 20.0;
+            double vx = mc.player.getVelocity().x;
+            double vz = mc.player.getVelocity().z;
+            double bps = Math.sqrt(vx * vx + vz * vz) * 20.0;
             lines.add(String.format(Locale.ROOT, "§7Speed: §f%.2f b/s", bps));
         }
 
